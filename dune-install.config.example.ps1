@@ -1,6 +1,5 @@
-# Copy to dune-install.config.ps1 and fill in FlsToken.
-# Do not commit dune-install.config.ps1 (it holds the Funcom JWT).
-# The installer does not prompt for world name, region, or IP — those come from here.
+# Copy to dune-install.config.ps1 and replace every placeholder with your values.
+# README.md explains each field. Keep dune-install.config.ps1 on this PC only.
 @{
     WorldName   = "My Sietch"
     # Funcom menu: Asia, Europe, North America, Oceania, South America
