@@ -76,7 +76,9 @@ Optional, but worth checking:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-DuneBattlegroup.ps1"
 ```
 
-The first run can take a long time. The script, in order: enables Windows WSL features, installs Ubuntu if this PC has none, writes `.wslconfig`, turns on systemd, opens the WSL Hyper-V firewall, downloads Funcom’s Linux depot with SteamCMD, starts k3s, creates the world, then waits until Overmap and Survival are Ready (up to about 20 minutes on that last wait). Leave the window open.
+The first run can take a long time. The script, in order: enables Windows WSL features **if they are not already on**, installs Ubuntu **if this PC has none**, writes `.wslconfig` only when mirrored networking is missing, turns on systemd if needed, opens the WSL Hyper-V firewall if needed, downloads Funcom’s Linux depot with SteamCMD if it is not already there, starts k3s, creates the world, then waits until Overmap and Survival are Ready (up to about 20 minutes on that last wait). Leave the window open.
+
+Re-running is safe. Already-installed WSL, Ubuntu, packages, SteamCMD, the depot, k3s, operators, and an existing world are skipped. It will not wipe operators or recreate the world. If maps are already Ready, it only refreshes join ports.
 
 **If it tells you to reboot:** Windows needed a restart to finish enabling WSL. Reboot, open elevated PowerShell in this folder again, and run the same command. Do not install WSL yourself. Your `dune-install.config.ps1` is already there.
 

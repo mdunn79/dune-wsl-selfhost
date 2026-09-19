@@ -32,11 +32,25 @@ if ! grep -q avx2 /proc/cpuinfo; then
 fi
 
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y ca-certificates curl tar gzip python3 openssl iptables iproute2 sudo
+PKGS=(ca-certificates curl tar gzip python3 openssl iptables iproute2 sudo)
+MISSING=()
+for p in "${PKGS[@]}"; do
+  if ! dpkg -s "$p" >/dev/null 2>&1; then
+    MISSING+=("$p")
+  fi
+done
+if [ "${#MISSING[@]}" -eq 0 ]; then
+  echo "apt packages already installed; skipping"
+else
+  echo "=== apt install: ${MISSING[*]} ==="
+  apt-get update -y
+  apt-get install -y "${MISSING[@]}"
+fi
 
 if ! id dune >/dev/null 2>&1; then
   useradd -m -s /bin/bash dune
+else
+  echo "user dune already exists; skipping useradd"
 fi
 echo 'dune ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/dune
 chmod 440 /etc/sudoers.d/dune
@@ -52,6 +66,8 @@ if [ ! -x /home/dune/Steam/steamcmd.sh ]; then
   echo "=== install SteamCMD for dune ==="
   curl -fsSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz \
     | sudo -u dune tar -xz -C /home/dune/Steam
+else
+  echo "SteamCMD already installed; skipping"
 fi
 ln -sfn /home/dune/Steam/steamcmd.sh /home/dune/.local/bin/steamcmd
 chown -h dune:dune /home/dune/.local/bin/steamcmd || true
@@ -63,13 +79,13 @@ else
   as_dune "export HOME=/home/dune PATH=/home/dune/.local/bin:\$PATH
     /home/dune/Steam/steamcmd.sh +@ShutdownOnFailedCommand 1 +@NoPromptForPassword 1 \
       +force_install_dir $DOWNLOAD_PATH +login anonymous +app_update 4754530 +quit"
+  chown -R dune:dune /home/dune/.dune /home/dune/Steam /home/dune/.local
 fi
 if [ ! -f "$SCRIPTS/setup.sh" ] || [ ! -d "$DOWNLOAD_PATH/images/operators/crds" ]; then
   echo "ERROR: depot missing scripts/setup.sh or operator CRDs under $DOWNLOAD_PATH" >&2
   ls -la "$DOWNLOAD_PATH" || true
   exit 1
 fi
-chown -R dune:dune /home/dune/.dune /home/dune/Steam /home/dune/.local
 
 echo "=== install helper scripts ==="
 lf "$SETUP_SRC/patch-vendor.py" /tmp/patch-vendor.py
@@ -88,13 +104,23 @@ echo "=== patch Funcom Alpine/OpenRC scripts for systemd ==="
 
 echo "=== k3s ==="
 sudo mkdir -p /etc/rancher/k3s/config.yaml.d
-sed 's/\r$//' "$SETUP_SRC/99-dune.yaml" | sudo tee /etc/rancher/k3s/config.yaml >/dev/null
-if ! command -v k3s >/dev/null 2>&1; then
-  as_dune "bash $SCRIPTS/setup/k3s.sh"
+K3S_CFG=/etc/rancher/k3s/config.yaml
+desired="$(sed 's/\r$//' "$SETUP_SRC/99-dune.yaml")"
+if [ -f "$K3S_CFG" ] && [ "$(cat "$K3S_CFG")" = "$desired" ]; then
+  echo "k3s config already in place; skipping"
 else
-  echo "k3s already installed"
-  systemctl enable k3s >/dev/null 2>&1 || true
-  systemctl start k3s
+  printf '%s\n' "$desired" | sudo tee "$K3S_CFG" >/dev/null
+fi
+if command -v k3s >/dev/null 2>&1; then
+  echo "k3s already installed; skipping k3s.sh"
+  if systemctl is-active --quiet k3s; then
+    echo "k3s already running"
+  else
+    systemctl enable k3s >/dev/null 2>&1 || true
+    systemctl start k3s
+  fi
+else
+  as_dune "bash $SCRIPTS/setup/k3s.sh"
 fi
 
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
@@ -117,13 +143,19 @@ echo "=== load images and Funcom operators ==="
 as_dune "/home/dune/dune-bootstrap-kubernetes.sh"
 
 echo "=== battlegroup CLI ==="
-as_dune "bash $SCRIPTS/setup/system.sh"
+if [ -x /home/dune/.dune/bin/battlegroup ] && [ -x "$SCRIPTS/battlegroup.sh" ]; then
+  echo "battlegroup CLI already installed; skipping setup/system.sh"
+else
+  as_dune "bash $SCRIPTS/setup/system.sh"
+fi
 ln -sfn "$SCRIPTS/battlegroup.sh" /home/dune/.dune/bin/battlegroup
 ln -sfn "$SCRIPTS/bg-util" /home/dune/.dune/bin/bg-util
 chmod +x "$SCRIPTS/battlegroup.sh" "$SCRIPTS/bg-util"
 chown -h dune:dune /home/dune/.dune/bin/battlegroup /home/dune/.dune/bin/bg-util || true
 
+WORLD_EXISTS=0
 if sudo kubectl get ns --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null | grep -q '^funcom-seabass-'; then
+  WORLD_EXISTS=1
   echo "World namespace already exists; skipping world.sh"
 else
   if [ ! -s "$TOKEN_FILE" ]; then
@@ -217,6 +249,8 @@ def walk(node,path):
         if isinstance(envs,list):
             for i,item in enumerate(envs):
                 if isinstance(item,dict) and item.get("name")=="HOST_DATACENTER_IP_ADDRESS":
+                    if item.get("value")==player_ip:
+                        continue
                     ops.append({"op":"replace" if "value" in item else "add","path":"/"+"/".join(esc(p) for p in path+["envVars",i,"value"]),"value":player_ip})
         for key,value in node.items():
             walk(value,path+[key])
@@ -229,39 +263,57 @@ print(json.dumps(ops))'
 if [ "$PATCH" != "[]" ]; then
   sudo kubectl patch battlegroup "$BG" -n "$NS" --type=json -p "$PATCH"
   echo "patched live BattleGroup IP"
+else
+  echo "BattleGroup IP already $LAN_IP; skipping patch"
 fi
 
-echo "=== apply images and usersettings ==="
-as_dune "$SCRIPTS/battlegroup.sh update-from-downloads" || true
-as_dune "$SCRIPTS/battlegroup.sh start" || true
-for i in $(seq 1 60); do
-  if sudo kubectl get pods -n "$NS" -l role=igw-filebrowser --no-headers 2>/dev/null | grep -q .; then
-    break
-  fi
-  echo "waiting for filebrowser ($i/60)"
-  sleep 5
-done
-as_dune "$SCRIPTS/battlegroup.sh apply-default-usersettings" || true
-
-echo "=== wait maps Ready ==="
-READY_TIMEOUT_SEC="${READY_TIMEOUT_SEC:-1200}"
-elapsed=0
-maps_ok=0
-while [ "$elapsed" -lt "$READY_TIMEOUT_SEC" ]; do
+maps_ready() {
+  local st
   st="$(as_dune /home/dune/.dune/bin/battlegroup status || true)"
   echo "$st"
-  if echo "$st" | grep -qE 'Overmap[[:space:]]+Running[[:space:]]+true' \
-    && echo "$st" | grep -qE 'Survival_1[[:space:]]+Running[[:space:]]+true'; then
-    echo "Maps Ready"
-    maps_ok=1
-    break
+  echo "$st" | grep -qE 'Overmap[[:space:]]+Running[[:space:]]+true' \
+    && echo "$st" | grep -qE 'Survival_1[[:space:]]+Running[[:space:]]+true'
+}
+
+if [ "$WORLD_EXISTS" -eq 1 ] && maps_ready; then
+  echo "Maps already Ready; skipping image apply, usersettings, and map wait"
+else
+  if [ "$WORLD_EXISTS" -eq 0 ]; then
+    echo "=== apply images and usersettings ==="
+    as_dune "$SCRIPTS/battlegroup.sh update-from-downloads" || true
+    as_dune "$SCRIPTS/battlegroup.sh start" || true
+    for i in $(seq 1 60); do
+      if sudo kubectl get pods -n "$NS" -l role=igw-filebrowser --no-headers 2>/dev/null | grep -q .; then
+        break
+      fi
+      echo "waiting for filebrowser ($i/60)"
+      sleep 5
+    done
+    as_dune "$SCRIPTS/battlegroup.sh apply-default-usersettings" || true
+  else
+    echo "World exists but maps are not Ready; starting battlegroup only"
+    as_dune "$SCRIPTS/battlegroup.sh start" || true
   fi
-  sleep 15
-  elapsed=$((elapsed + 15))
-done
-if [ "$maps_ok" -ne 1 ]; then
-  echo "ERROR: maps did not become Ready within ${READY_TIMEOUT_SEC}s (join will spin)" >&2
-  exit 1
+  echo "=== wait maps Ready ==="
+  READY_TIMEOUT_SEC="${READY_TIMEOUT_SEC:-1200}"
+  elapsed=0
+  maps_ok=0
+  while [ "$elapsed" -lt "$READY_TIMEOUT_SEC" ]; do
+    st="$(as_dune /home/dune/.dune/bin/battlegroup status || true)"
+    echo "$st"
+    if echo "$st" | grep -qE 'Overmap[[:space:]]+Running[[:space:]]+true' \
+      && echo "$st" | grep -qE 'Survival_1[[:space:]]+Running[[:space:]]+true'; then
+      echo "Maps Ready"
+      maps_ok=1
+      break
+    fi
+    sleep 15
+    elapsed=$((elapsed + 15))
+  done
+  if [ "$maps_ok" -ne 1 ]; then
+    echo "ERROR: maps did not become Ready within ${READY_TIMEOUT_SEC}s (join will spin)" >&2
+    exit 1
+  fi
 fi
 
 echo "=== bind join ports ==="

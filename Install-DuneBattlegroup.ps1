@@ -73,16 +73,32 @@ function Get-InstallConfig {
     return (Get-Content -Raw $path | Invoke-Expression)
 }
 
+function Test-WslUsable {
+    $st = Get-WindowsOptionalFeature -Online -FeatureName "Microsoft-Windows-Subsystem-Linux" -ErrorAction SilentlyContinue
+    return [bool]($st -and $st.State -eq "Enabled")
+}
+
 function Ensure-WslFeature {
+    if (Test-WslUsable) {
+        Write-Log "WSL is already installed; skipping Windows feature enable"
+        return $false
+    }
     $needRestart = $false
+    $enabledAny = $false
     foreach ($name in @("Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform")) {
         $st = Get-WindowsOptionalFeature -Online -FeatureName $name -ErrorAction SilentlyContinue
         if (-not $st) { continue }
-        if ($st.State -ne "Enabled") {
-            Write-Log "Enabling Windows feature $name"
-            $r = Enable-WindowsOptionalFeature -Online -FeatureName $name -All -NoRestart
-            if ($r.RestartNeeded) { $needRestart = $true }
+        if ($st.State -eq "Enabled") {
+            Write-Log "Windows feature $name already enabled; skipping"
+            continue
         }
+        Write-Log "Enabling Windows feature $name"
+        $enabledAny = $true
+        $r = Enable-WindowsOptionalFeature -Online -FeatureName $name -All -NoRestart
+        if ($r.RestartNeeded) { $needRestart = $true }
+    }
+    if (-not $enabledAny) {
+        Write-Log "WSL Windows features already enabled; skipping"
     }
     return $needRestart
 }
@@ -99,13 +115,6 @@ function Get-WslDistro([string]$Preferred) {
 
 function Set-WslConfig($Cfg) {
     $path = Join-Path $env:USERPROFILE ".wslconfig"
-    if (Test-Path $path) {
-        $cur = Get-Content -Raw $path
-        if ($cur -match "networkingMode\s*=\s*mirrored") {
-            Write-Log "Keeping existing .wslconfig (mirrored already set)"
-            return $false
-        }
-    }
     $desired = @"
 [wsl2]
 memory=$($Cfg.WslMemory)
@@ -118,25 +127,62 @@ firewall=true
 [experimental]
 hostAddressLoopback=true
 "@
-    Set-Content -Path $path -Value $desired -Encoding ASCII
-    Write-Log "Wrote $path (mirrored networking, $($Cfg.WslMemory))"
+    if (-not (Test-Path $path)) {
+        Set-Content -Path $path -Value $desired -Encoding ASCII
+        Write-Log "Wrote $path (mirrored networking, $($Cfg.WslMemory))"
+        return $true
+    }
+    $cur = Get-Content -Raw $path
+    if ($cur -match "networkingMode\s*=\s*mirrored") {
+        Write-Log "Keeping existing .wslconfig (mirrored already set); not rewriting WSL settings"
+        return $false
+    }
+    Write-Log "Existing .wslconfig found; adding mirrored networking only (keeping memory/CPU settings)"
+    $text = $cur.TrimEnd()
+    if ($text -notmatch '\[wsl2\]') {
+        $text += "`r`n[wsl2]"
+    }
+    foreach ($pair in @("networkingMode=mirrored", "dnsTunneling=true", "firewall=true")) {
+        $key = ($pair -split "=", 2)[0]
+        if ($text -notmatch "$key\s*=") {
+            $text = [regex]::Replace($text, "\[wsl2\]", "[wsl2]`r`n$pair", 1)
+        }
+    }
+    if ($text -notmatch '\[experimental\]') {
+        $text += "`r`n`r`n[experimental]`r`nhostAddressLoopback=true"
+    } elseif ($text -notmatch "hostAddressLoopback\s*=") {
+        $text = [regex]::Replace($text, "\[experimental\]", "[experimental]`r`nhostAddressLoopback=true", 1)
+    }
+    Set-Content -Path $path -Value ($text.TrimEnd() + "`r`n") -Encoding ASCII
     return $true
 }
 
 function Set-WslHyperVFirewall {
-    Write-Log "Allowing inbound on the WSL Hyper-V firewall (Home still uses this for WSL2)"
-    Set-NetFirewallHyperVVMSetting -Name $WslCreatorId -Enabled True -DefaultInboundAction Allow
+    $cur = Get-NetFirewallHyperVVMSetting -Name $WslCreatorId -ErrorAction SilentlyContinue
+    $alreadyAllow = $cur -and $cur.Enabled -and ("$($cur.DefaultInboundAction)" -eq "Allow")
+    if ($alreadyAllow) {
+        Write-Log "WSL Hyper-V firewall inbound already Allow; skipping VM setting"
+    } else {
+        Write-Log "Allowing inbound on the WSL Hyper-V firewall (Home still uses this for WSL2)"
+        Set-NetFirewallHyperVVMSetting -Name $WslCreatorId -Enabled True -DefaultInboundAction Allow
+    }
     $rules = @(
         @{ Name = "Dune-WSL-UDP-Game"; DisplayName = "Dune WSL UDP game"; Protocol = "UDP"; Ports = "7777-7810,7888-7941" },
         @{ Name = "Dune-WSL-TCP-RMQ"; DisplayName = "Dune WSL TCP RMQ"; Protocol = "TCP"; Ports = "31982" },
         @{ Name = "Dune-WSL-TCP-Admin"; DisplayName = "Dune WSL TCP admin"; Protocol = "TCP"; Ports = "18888,31519,11717" }
     )
+    $created = 0
+    $skipped = 0
     foreach ($r in $rules) {
-        if (-not (Get-NetFirewallHyperVRule -Name $r.Name -ErrorAction SilentlyContinue)) {
-            New-NetFirewallHyperVRule -Name $r.Name -DisplayName $r.DisplayName -Direction Inbound -Action Allow `
-                -Protocol $r.Protocol -LocalPorts $r.Ports -VMCreatorId $WslCreatorId | Out-Null
+        if (Get-NetFirewallHyperVRule -Name $r.Name -ErrorAction SilentlyContinue) {
+            $skipped++
+            continue
         }
+        New-NetFirewallHyperVRule -Name $r.Name -DisplayName $r.DisplayName -Direction Inbound -Action Allow `
+            -Protocol $r.Protocol -LocalPorts $r.Ports -VMCreatorId $WslCreatorId | Out-Null
+        $created++
     }
+    Write-Log "WSL Hyper-V firewall rules: $created created, $skipped already present"
 }
 
 function Convert-WinPathToWsl([string]$WinPath) {
@@ -162,18 +208,6 @@ if ([string]::IsNullOrWhiteSpace($regionName) -and $cfg.RegionIndex) {
 }
 $regionIndex = Get-RegionIndex $regionName
 $playStyle = Resolve-PlayStyle $cfg
-if ([string]::IsNullOrWhiteSpace($cfg.FlsToken)) {
-    $sec = Read-Host "Funcom self-host token (account.duneawakening.com)" -AsSecureString
-    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
-    try {
-        $cfg.FlsToken = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
-    } finally {
-        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
-    }
-}
-if ([string]::IsNullOrWhiteSpace($cfg.FlsToken)) {
-    throw "FlsToken is required."
-}
 
 Write-Log "World '$($cfg.WorldName)' region '$regionName' ip $($cfg.LanIp) playstyle $playStyle"
 $restartNeeded = Ensure-WslFeature
@@ -187,7 +221,9 @@ if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
 }
 
 $distro = Get-WslDistro $cfg.Distro
-if (-not $distro) {
+if ($distro) {
+    Write-Log "WSL distro $distro already present; skipping Ubuntu install"
+} else {
     Write-Log "Installing Ubuntu for WSL (no Hyper-V Manager / no Pro upgrade)"
     & wsl.exe --install -d Ubuntu --no-launch
     if ($LASTEXITCODE -ne 0) {
@@ -204,7 +240,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $systemdOut = & wsl.exe -d $distro -u root -- bash -lc "ps -p 1 -o comm="
-if ($systemdOut -notmatch "systemd") {
+if ($systemdOut -match "systemd") {
+    Write-Log "systemd already running in $distro; skipping /etc/wsl.conf"
+} else {
     Write-Log "Enabling systemd in /etc/wsl.conf"
     & wsl.exe -d $distro -u root -- bash -lc "grep -q systemd=true /etc/wsl.conf 2>/dev/null || printf '\n[boot]\nsystemd=true\n' >> /etc/wsl.conf"
     $wslConfigChanged = $true
@@ -220,10 +258,32 @@ if ($wslConfigChanged) {
 Set-WslHyperVFirewall
 Show-WindowsFirewallAdvice
 
+$savedProbe = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+$worldProbe = & wsl.exe -d $distro -u root -- bash -lc "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml; kubectl get ns --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null | grep '^funcom-seabass-' | head -n1"
+$ErrorActionPreference = $savedProbe
+$worldExists = -not [string]::IsNullOrWhiteSpace("$worldProbe")
+if ($worldExists) {
+    Write-Log "Funcom world already present ($($worldProbe.ToString().Trim())); skipping token prompt"
+} elseif ([string]::IsNullOrWhiteSpace($cfg.FlsToken)) {
+    $sec = Read-Host "Funcom self-host token (account.duneawakening.com)" -AsSecureString
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
+    try {
+        $cfg.FlsToken = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+    } finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    }
+}
+if (-not $worldExists -and [string]::IsNullOrWhiteSpace($cfg.FlsToken)) {
+    throw "FlsToken is required to create a world."
+}
+
 $tokenFile = Join-Path $SetupRoot ".fls-token"
 $envFile = Join-Path $SetupRoot "install.env"
 try {
-    [IO.File]::WriteAllText($tokenFile, $cfg.FlsToken.Trim())
+    if (-not $worldExists) {
+        [IO.File]::WriteAllText($tokenFile, $cfg.FlsToken.Trim())
+    }
     $setupUnix = Convert-WinPathToWsl $SetupRoot
     $envBody = @(
         "SETUP_SRC=$setupUnix"
@@ -233,7 +293,7 @@ try {
         "DUNE_PLAY_STYLE=$playStyle"
     ) -join "`n"
     [IO.File]::WriteAllText($envFile, $envBody)
-    Write-Log "Installing Linux depot + k3s + world inside $distro (this can take a long time)"
+    Write-Log "Installing Linux depot + k3s + world inside $distro (already-installed pieces are skipped)"
     $linux = "sed 's/\r`$//' '$setupUnix/run-linux-install.sh' | bash -s -- '$setupUnix'"
     $savedEap = $ErrorActionPreference
     $ErrorActionPreference = "Continue"

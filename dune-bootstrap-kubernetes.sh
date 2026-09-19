@@ -141,6 +141,22 @@ wait_deployment_created() {
 
 wait_k3s_ready
 
+if sudo kubectl get deploy -n funcom-operators battlegroupoperator-controller-manager >/dev/null 2>&1 \
+  && sudo kubectl get deploy -n funcom-operators databaseoperator-controller-manager >/dev/null 2>&1 \
+  && sudo kubectl get deploy -n funcom-operators serveroperator-controller-manager >/dev/null 2>&1 \
+  && sudo kubectl get deploy -n funcom-operators utilitiesoperator-controller-manager >/dev/null 2>&1 \
+  && sudo kubectl get deploy -n cert-manager cert-manager >/dev/null 2>&1; then
+  echo "Funcom operators already installed; skipping image import and operator apply"
+  sudo kubectl wait --for=condition=Available -n funcom-operators deployment/battlegroupoperator-controller-manager --timeout=180s
+  sudo kubectl wait --for=condition=Available -n funcom-operators deployment/databaseoperator-controller-manager --timeout=180s
+  sudo kubectl wait --for=condition=Available -n funcom-operators deployment/serveroperator-controller-manager --timeout=180s
+  sudo kubectl wait --for=condition=Available -n funcom-operators deployment/utilitiesoperator-controller-manager --timeout=180s
+  echo "Kubernetes bootstrap complete (already installed)."
+  sudo kubectl get pods -n funcom-operators
+  sudo kubectl get pods -n cert-manager
+  exit 0
+fi
+
 load_image_from_file "images/prerequisites/coredns-coredns.tar"
 load_image_from_file "images/prerequisites/local-path-provisioner.tar"
 load_image_from_file "images/prerequisites/metrics-server.tar"

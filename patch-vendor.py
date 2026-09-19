@@ -24,10 +24,14 @@ for relative_path, file_replacements in replacements.items():
     if not path.exists():
         print(f"skip missing {relative_path}")
         continue
+    text = path.read_text()
+    needed = any(old in text for old in file_replacements)
+    if not needed:
+        print(f"already patched {relative_path}; skipping")
+        continue
     bak = Path(str(path) + ".ubuntu-patch.bak")
     if not bak.exists():
         bak.write_bytes(path.read_bytes())
-    text = path.read_text()
     for old, new in file_replacements.items():
         text = text.replace(old, new)
     path.write_text(text)
