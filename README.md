@@ -8,7 +8,7 @@ The scripts in this folder are MIT. The game files SteamCMD downloads are Funcom
 
 ## What you need
 
-- Windows 11 (Home is fine). A current build with WSL2 available.
+- Windows 11 (Home is fine). You do **not** need WSL or Ubuntu already installed — the installer turns on the Windows WSL features, installs Ubuntu, and configures WSL2 (mirrored networking, systemd, WSL firewall).
 - CPU with **AVX2** (Funcom’s Unreal requirement).
 - Enough RAM that you can give WSL a large allocation and still leave several GB for Windows. Funcom’s self-host wants a lot of RAM; **32 GB for WSL** is the default in the example config. On a 32 GB PC, lower `WslMemory` (for example `24GB`). On 64 GB, `32GB` is comfortable.
 - Disk space for Ubuntu, k3s, and the Linux Steam depot (plan on tens of GB).
@@ -16,7 +16,9 @@ The scripts in this folder are MIT. The game files SteamCMD downloads are Funcom
 - A Funcom **self-host token** from [account.duneawakening.com](https://account.duneawakening.com/).
 - The **Dune: Awakening Experimental** client on every machine that will play. The client build must match the Linux depot this installer downloads.
 
-You do **not** need: Windows 11 Pro, Hyper-V, Funcom’s Windows SteamCMD `installdune.bat`, or a Steam account for the dedicated server (SteamCMD uses anonymous login).
+You do **not** need: WSL preinstalled, Ubuntu preinstalled, Windows 11 Pro, Hyper-V Manager, Funcom’s Windows SteamCMD `installdune.bat`, or a Steam account for the dedicated server (SteamCMD uses anonymous login).
+
+Windows itself may require **one reboot** the first time those WSL features are enabled. That is a Windows limit, not a manual WSL install. After reboot, run the same installer command again; it continues from there.
 
 ## 1. Put this folder on the host PC
 
@@ -74,9 +76,9 @@ Optional, but worth checking:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-DuneBattlegroup.ps1"
 ```
 
-The first run can take a long time: enable WSL if needed, install Ubuntu if needed, download Funcom’s Linux depot with SteamCMD, start k3s, create the world, then wait until Overmap and Survival are Ready (up to about 20 minutes on that last wait). Leave the window open.
+The first run can take a long time. The script, in order: enables Windows WSL features, installs Ubuntu if this PC has none, writes `.wslconfig`, turns on systemd, opens the WSL Hyper-V firewall, downloads Funcom’s Linux depot with SteamCMD, starts k3s, creates the world, then waits until Overmap and Survival are Ready (up to about 20 minutes on that last wait). Leave the window open.
 
-**If Windows just enabled WSL features and asks for a reboot:** reboot, open elevated PowerShell in this folder again, and run the same command. Your `dune-install.config.ps1` is already there.
+**If it tells you to reboot:** Windows needed a restart to finish enabling WSL. Reboot, open elevated PowerShell in this folder again, and run the same command. Do not install WSL yourself. Your `dune-install.config.ps1` is already there.
 
 **If it says it created `dune-install.config.ps1` and stopped:** that is expected on a first click with no config. Edit the file (step 3) and run the installer again.
 
@@ -133,7 +135,8 @@ Set `PlayStyle` **before** the first successful world create. The installer appl
 - **“Run this script from an elevated PowerShell window.”** Re-open PowerShell as Administrator.
 - **WorldName / Region / LanIp errors.** Edit `dune-install.config.ps1`. Region must match the table above exactly. LanIp must be this PC’s LAN IPv4.
 - **AVX2 error.** This CPU cannot run Funcom’s Unreal server.
-- **Ubuntu missing after install.** Run `wsl -l -v`, then re-run the installer.
+- **Reboot / re-run for WSL.** Expected on a PC that did not have WSL yet. After Windows comes back, run the installer again; it installs Ubuntu and continues.
+- **Ubuntu missing after install.** Re-run the installer (it runs `wsl --install -d Ubuntu`). If it still fails, `wsl -l -v` and try once more.
 - **Maps not Ready / join spinner.** Wait out the first Survival start. Re-run `Restart-DuneBattlegroup.ps1`. Confirm Windows Firewall (step 5) and that you are joining from another PC.
 - **Client cannot see the world.** Same Experimental build, correct `LanIp`, firewall, other PC on the same LAN.
 
