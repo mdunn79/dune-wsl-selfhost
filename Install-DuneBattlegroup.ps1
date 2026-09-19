@@ -48,9 +48,10 @@ function Show-WindowsFirewallAdvice {
         return
     }
     Write-Log "Windows Firewall is ON for: $($on -join ', '). This installer will not change it."
-    Write-Log "If LAN clients cannot join, allow inbound on this PC (you do this, not the script):"
+    Write-Log "If clients cannot join, allow inbound on this PC (you do this, not the script):"
     Write-Log "  UDP 7777-7810 and 7888-7941 (game / IGW)"
-    Write-Log "  TCP 31982 (join), 31519 (Director), 18888 (File Browser)"
+    Write-Log "  TCP 31982 (join), 31519 (Director), 18888 (File Browser, keep off the internet)"
+    Write-Log "For internet players: port-forward those UDP ranges and TCP 31982 (and 31519) to LanIp. Set AdvertiseIp to your public WAN IPv4."
     Write-Log "WSL has a separate Hyper-V firewall; this installer does configure that one."
 }
 
@@ -63,6 +64,18 @@ function Resolve-PlayStyle($Cfg) {
         throw "PlayStyle must be CasualPve or Official (got '$style')"
     }
     return $ok[$key]
+}
+
+function Resolve-AdvertiseIp($Cfg) {
+    $adv = "$($Cfg.AdvertiseIp)".Trim()
+    if ([string]::IsNullOrWhiteSpace($adv)) { return [string]$Cfg.LanIp }
+    if ($adv -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
+        throw "AdvertiseIp must be an IPv4 address (your public WAN IP), or leave it empty for LAN-only."
+    }
+    if ($adv -match '^(127\.|0\.0\.0\.0$)') {
+        throw "AdvertiseIp cannot be $adv"
+    }
+    return $adv
 }
 
 function Assert-LanIp([string]$LanIp) {
@@ -227,8 +240,9 @@ if ([string]::IsNullOrWhiteSpace($regionName) -and $cfg.RegionIndex) {
 $regionIndex = Get-RegionIndex $regionName
 $playStyle = Resolve-PlayStyle $cfg
 Assert-LanIp $cfg.LanIp
+$advertiseIp = Resolve-AdvertiseIp $cfg
 
-Write-Log "World '$($cfg.WorldName)' region '$regionName' ip $($cfg.LanIp) playstyle $playStyle"
+Write-Log "World '$($cfg.WorldName)' region '$regionName' bind $($cfg.LanIp) advertise $advertiseIp playstyle $playStyle"
 $restartNeeded = Ensure-WslFeature
 if ($restartNeeded) {
     Write-Log "Windows asked for a restart to finish WSL features. Reboot, then run this script again. Not required on every machine."
@@ -325,6 +339,7 @@ try {
         "DUNE_WORLD_NAME='$($cfg.WorldName)'"
         "DUNE_REGION_INDEX=$regionIndex"
         "DUNE_LAN_IP=$($cfg.LanIp)"
+        "DUNE_ADVERTISE_IP=$advertiseIp"
         "DUNE_PLAY_STYLE=$playStyle"
     ) -join "`n"
     [IO.File]::WriteAllText($envFile, $envBody)
@@ -352,6 +367,6 @@ finally {
     if (Test-Path $envFile) { Remove-Item -Force $envFile -ErrorAction SilentlyContinue }
 }
 
-Write-Log "Join from a LAN client as $($cfg.WorldName) ($($cfg.LanIp)). Do not join from this Windows host."
+Write-Log "Join as $($cfg.WorldName) at $advertiseIp (bound on $($cfg.LanIp)). Do not join from this Windows host."
 Write-Log "Daily maintain: Restart-DuneBattlegroup.ps1 (queries Steam; rolls maps only if a newer depot is waiting)."
 Write-Log "=== Install-DuneBattlegroup end ==="

@@ -2,8 +2,7 @@
 
 Runs Funcom’s **Linux** battlegroup inside WSL2. It does **not** use Funcom’s Hyper-V VM, Hyper-V Manager, or Windows 11 Pro.
 
-Players join over the LAN. Do not join from the same Windows PC that is hosting the world.
-
+Players can join from your LAN or from the internet if you port-forward, same as any other dedicated server on this PC. Do **not** join from the same Windows machine that is hosting the world (WSL mirrored networking does not hairpin).
 The scripts in this folder are MIT. The game files SteamCMD downloads are Funcom’s; this pack does not redistribute them.
 
 ## What you need
@@ -14,7 +13,7 @@ The scripts in this folder are MIT. The game files SteamCMD downloads are Funcom
 - **About 32 GB RAM in the PC**, preferably more. Funcom’s self-host wants a large VM. The example gives **32 GB to WSL**; that only works on a 64 GB machine. On a 32 GB PC set `WslMemory` to `24GB`. A 16 GB PC is not enough.
 - **~80 GB free disk** (Ubuntu + k3s + Funcom’s Linux depot).
 - Internet on the host for Ubuntu, SteamCMD, and cert-manager.
-- A wired or Wi-Fi LAN, plus **a second PC** on that LAN to play. You cannot reliably join from the same Windows machine that hosts the world.
+- A **second PC** to play from (LAN or internet). You cannot reliably join from the same Windows machine that hosts the world.
 - A Funcom **self-host token** from [account.duneawakening.com](https://account.duneawakening.com/) (Self-Host / experimental section for your account).
 - The **Dune: Awakening Experimental** client on every machine that will play (Steam; not the live/main branch). Client build must match the Linux depot this installer downloads.
 
@@ -53,7 +52,8 @@ Fill in at least these:
 | --- | --- |
 | `WorldName` | The name players see in the self-host list. No `'` or `\|`. Example: `"My Sietch"`. |
 | `Region` | Exactly one of: `Asia`, `Europe`, `North America`, `Oceania`, `South America`. This is Funcom’s region menu, not your Windows locale. |
-| `LanIp` | This host PC’s **LAN IPv4**, not `127.0.0.1`. See below. |
+| `LanIp` | This host PC’s **LAN IPv4** (Ethernet/Wi-Fi). Traffic binds here. Not `127.0.0.1`. See below. |
+| `AdvertiseIp` | Leave `""` for LAN-only. For internet players, your **public WAN IPv4** (what you port-forward to this PC). |
 | `PlayStyle` | `CasualPve` or `Official`. See [Play styles](#play-styles). |
 | `FlsToken` | Your Funcom token in quotes, or `""` to be prompted. |
 
@@ -67,6 +67,8 @@ Optional, but worth checking:
 | `WslSwap` | WSL swap size. |
 
 **Finding `LanIp`:** in PowerShell, run `ipconfig`. Use the IPv4 of Ethernet or Wi-Fi on this LAN (often `192.168.x.x` or `10.x.x.x`). Skip `127.0.0.1`, the example `192.168.0.10` unless it really is this PC, and VPN/virtual adapters. The installer refuses an address that is not assigned to this machine.
+
+**Finding `AdvertiseIp`:** LAN-only — leave it empty. Internet — your public IPv4 (router status page, or a “what is my IP” lookup from this PC). That is the address Funcom gives clients. `LanIp` stays the private address you forward **to**.
 
 **Do not share** `dune-install.config.ps1`. It can hold your token. The example file in this repo is only a template.
 
@@ -99,7 +101,7 @@ Watch `install-dune-battlegroup.log` in this folder if the window is hard to rea
 
 The installer **does not** change Windows Firewall. It **does** open the separate WSL Hyper-V firewall that WSL2 uses on Home.
 
-If Windows Firewall is on (it usually is) and LAN clients cannot join, allow **inbound** on this host. In the **same elevated PowerShell** window, you can run:
+If Windows Firewall is on (it usually is) and clients cannot join, allow **inbound** on this host. In the **same elevated PowerShell** window, you can run:
 
 ```powershell
 New-NetFirewallRule -DisplayName "Dune WSL UDP game" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 7777-7810,7888-7941
@@ -108,11 +110,28 @@ New-NetFirewallRule -DisplayName "Dune WSL TCP join" -Direction Inbound -Action 
 
 Or: Windows Security → Firewall & network protection → Advanced settings → Inbound Rules, and allow those ports yourself.
 
-You do **not** need to port-forward on the router for LAN-only play.
+## 6. Internet players (port forwarding)
 
-## 6. Join from another PC
+LAN-only: skip this. Internet: on the router, forward to this PC’s **`LanIp`**:
 
-1. On a **different** computer on the same LAN, launch Dune: Awakening **Experimental**.
+| Protocol | Ports | Why |
+| --- | --- | --- |
+| UDP | `7777–7810` | Game |
+| UDP | `7888–7941` | IGW (server-to-server / related) |
+| TCP | `31982` | Join (AMQP) |
+| TCP | `31519` | Director |
+
+Set `AdvertiseIp` to your public WAN IPv4, then re-run the installer so Funcom advertises that address. Same idea as any other dedicated server on this box.
+
+Do **not** port-forward TCP `18888` (Funcom file browser) unless you intend to expose that admin UI to the internet.
+
+If your ISP uses CGNAT (no real public IPv4), forwarding will not reach this PC. LAN play still works.
+
+LAN friends, when `AdvertiseIp` is your WAN IP, usually join through the public listing. That needs NAT loopback on the router; many home routers have it. They still must not use the Windows host itself.
+
+## 7. Join from another PC
+
+1. On a **different** computer (LAN or internet), launch Dune: Awakening **Experimental**.
 2. Open the self-host / Experimental server list.
 3. Find the name you set as `WorldName`.
 4. Connect. Client and server must be on the same game version.
@@ -121,7 +140,7 @@ You do **not** need to port-forward on the router for LAN-only play.
 
 First Survival boot can sit in a spinner for several minutes even after the installer reports maps Ready. Wait before assuming it failed.
 
-## 7. Keep it running and patched
+## 8. Keep it running and patched
 
 From PowerShell in this folder (does not need to take the world down if Steam has no new depot):
 
@@ -153,7 +172,7 @@ Set `PlayStyle` **before** the first successful world create. The installer appl
 - **Ubuntu missing after install.** Reboot if Windows asked, then re-run. Check with `wsl -l -v`.
 - **LanIp is not assigned to this PC.** The installer now checks this. Put the IPv4 from `ipconfig` for Ethernet or Wi-Fi, not the example `192.168.0.10` unless that really is this PC.
 - **Maps not Ready / join spinner.** Wait out the first Survival start (several minutes). Re-run `Restart-DuneBattlegroup.ps1`. Confirm Windows Firewall (step 5) and that you are joining from **another** PC.
-- **Client cannot see the world.** Experimental client (not live), same build as the server, correct `LanIp`, firewall, other PC on the same LAN.
+- **Client cannot see the world.** Experimental client (not live), same build as the server, firewall, another PC (not this host). For internet: `AdvertiseIp` must be your WAN IPv4 and the router must forward to `LanIp`. For LAN-only: leave `AdvertiseIp` empty and use the real `LanIp`.
 - **WSL distro failed to start.** Often RAM (`WslMemory` too high for this PC) or virtualization off.
 
 This installer is meant for a from-scratch Home box. It will skip world create if a Funcom battlegroup namespace already exists in that Ubuntu.

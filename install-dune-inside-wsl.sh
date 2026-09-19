@@ -7,6 +7,7 @@ SETUP_SRC="${SETUP_SRC:?set SETUP_SRC to this installer folder via /mnt/c/...}"
 WORLD_NAME="${DUNE_WORLD_NAME:?set DUNE_WORLD_NAME}"
 REGION_INDEX="${DUNE_REGION_INDEX:-3}"
 LAN_IP="${DUNE_LAN_IP:?set DUNE_LAN_IP}"
+ADVERTISE_IP="${DUNE_ADVERTISE_IP:-$LAN_IP}"
 PLAY_STYLE="${DUNE_PLAY_STYLE:-CasualPve}"
 DOWNLOAD_PATH=/home/dune/.dune/download
 SCRIPTS="$DOWNLOAD_PATH/scripts"
@@ -24,7 +25,7 @@ as_dune() {
 }
 
 echo "=== dune linux install ==="
-echo "world=$WORLD_NAME region=$REGION_INDEX ip=$LAN_IP playstyle=$PLAY_STYLE"
+echo "world=$WORLD_NAME region=$REGION_INDEX bind=$LAN_IP advertise=$ADVERTISE_IP playstyle=$PLAY_STYLE"
 
 if ! grep -q avx2 /proc/cpuinfo; then
   echo "ERROR: CPU lacks AVX2 (Funcom Unreal requirement)" >&2
@@ -181,7 +182,7 @@ print("patched world.sh and world-template.yaml")
 PY
   mkdir -p /home/dune/.dune/bin
   printf 'manual\n' > /home/dune/.dune/battlegroup-ip.conf
-  printf '\n\n\n%s\n' "$LAN_IP" > /home/dune/.dune/settings.conf
+  printf '\n\n\n%s\n' "$ADVERTISE_IP" > /home/dune/.dune/settings.conf
   CFG_DST="$SCRIPTS/setup/config"
   if [ "$PLAY_STYLE" = "Official" ]; then
     echo "PlayStyle=Official; leaving Funcom default UserSettings"
@@ -212,15 +213,19 @@ PY
   printf '%s\n' "$WORLD_NAME" "$REGION_INDEX" "$TOKEN" | sudo -u dune -H bash "$SCRIPTS/setup/world.sh"
 fi
 
-echo "=== HOST_DATACENTER_IP_ADDRESS=$LAN_IP ==="
+echo "=== HOST_DATACENTER_IP_ADDRESS=$ADVERTISE_IP (bind $LAN_IP) ==="
 python3 - <<PY
 from pathlib import Path
-ip = "$LAN_IP"
+import re
+ip = "$ADVERTISE_IP"
+pat = re.compile(r"(name:\s*HOST_DATACENTER_IP_ADDRESS\s*\n\s*value:\s*)(\S+)")
 for path in Path("/home/dune/.dune").glob("sh-*.yaml"):
     if path.name.endswith("-fls-secret.yaml") or path.name.endswith("-rmq-secret.yaml"):
         continue
     text = path.read_text()
-    updated = text.replace("value: 127.0.0.1", f"value: {ip}")
+    updated, n = pat.subn(r"\g<1>" + ip, text)
+    if n == 0:
+        updated = text.replace("value: 127.0.0.1", f"value: {ip}")
     if updated != text:
         path.write_text(updated)
         print(f"patched {path}")
@@ -237,9 +242,9 @@ echo "Namespace=$NS BattleGroup=$BG"
 
 PATCH="$(
   sudo kubectl get battlegroup "$BG" -n "$NS" -o json \
-    | DUNE_LAN_IP="$LAN_IP" python3 -c 'import json,os,sys
+    | DUNE_ADVERTISE_IP="$ADVERTISE_IP" python3 -c 'import json,os,sys
 bg=json.load(sys.stdin)
-player_ip=os.environ["DUNE_LAN_IP"]
+player_ip=os.environ["DUNE_ADVERTISE_IP"]
 ops=[]
 def esc(part):
     return str(part).replace("~","~0").replace("/","~1")
@@ -264,7 +269,7 @@ if [ "$PATCH" != "[]" ]; then
   sudo kubectl patch battlegroup "$BG" -n "$NS" --type=json -p "$PATCH"
   echo "patched live BattleGroup IP"
 else
-  echo "BattleGroup IP already $LAN_IP; skipping patch"
+  echo "BattleGroup advertise IP already $ADVERTISE_IP; skipping patch"
 fi
 
 maps_ready() {
@@ -320,5 +325,5 @@ echo "=== bind join ports ==="
 as_dune "DUNE_LAN_IP=$LAN_IP /home/dune/.dune/bin/dune-ensure-join.sh"
 
 rm -f "$TOKEN_FILE"
-echo "INSTALL_DONE NS=$NS BG=$BG IP=$LAN_IP"
+echo "INSTALL_DONE NS=$NS BG=$BG bind=$LAN_IP advertise=$ADVERTISE_IP"
 as_dune /home/dune/.dune/bin/battlegroup status || true

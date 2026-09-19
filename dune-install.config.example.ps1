@@ -5,6 +5,8 @@
     # Funcom menu: Asia, Europe, North America, Oceania, South America
     Region      = "North America"
     LanIp       = "192.168.0.10"
+    # Empty = LAN-only (clients use LanIp). For internet players, your public WAN IPv4.
+    AdvertiseIp = ""
     # CasualPve = NoPVP + faster/easier progression (bundled inis)
     # Official  = Funcom depot defaults (PvP/security zones as shipped)
     PlayStyle   = "CasualPve"
