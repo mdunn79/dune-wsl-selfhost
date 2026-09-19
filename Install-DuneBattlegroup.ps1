@@ -48,10 +48,10 @@ function Show-WindowsFirewallAdvice {
         return
     }
     Write-Log "Windows Firewall is ON for: $($on -join ', '). This installer will not change it."
-    Write-Log "If clients cannot join, allow inbound on this PC (you do this, not the script):"
+    Write-Log "If clients cannot join, allow inbound on the host (you do this, not the script):"
     Write-Log "  UDP 7777-7810 and 7888-7941 (game / IGW)"
     Write-Log "  TCP 31982 (join), 31519 (Director), 18888 (File Browser, keep off the internet)"
-    Write-Log "For internet players: port-forward those UDP ranges and TCP 31982 (and 31519) to LanIp. Set AdvertiseIp to your public WAN IPv4."
+    Write-Log "For internet players: port-forward those UDP ranges and TCP 31982 (and 31519) to LanIp. Set AdvertiseIp to the public WAN IPv4."
     Write-Log "WSL has a separate Hyper-V firewall; this installer does configure that one."
 }
 
@@ -70,7 +70,7 @@ function Resolve-AdvertiseIp($Cfg) {
     $adv = "$($Cfg.AdvertiseIp)".Trim()
     if ([string]::IsNullOrWhiteSpace($adv)) { return [string]$Cfg.LanIp }
     if ($adv -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
-        throw "AdvertiseIp must be an IPv4 address (your public WAN IP), or leave it empty for LAN-only."
+        throw "AdvertiseIp must be an IPv4 address (the host's public WAN IP), or leave it empty for LAN-only."
     }
     if ($adv -match '^(127\.|0\.0\.0\.0$)') {
         throw "AdvertiseIp cannot be $adv"
@@ -80,13 +80,13 @@ function Resolve-AdvertiseIp($Cfg) {
 
 function Assert-LanIp([string]$LanIp) {
     if ($LanIp -match '^(127\.|0\.0\.0\.0$|::1$)') {
-        throw "LanIp $LanIp is not a LAN address. Use this PC's Ethernet/Wi-Fi IPv4 from ipconfig."
+        throw "LanIp $LanIp is not a LAN address. Use the host's Ethernet/Wi-Fi IPv4 from ipconfig."
     }
     $mine = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
         Where-Object { $_.IPAddress -and $_.IPAddress -notlike "127.*" } |
         Select-Object -ExpandProperty IPAddress)
     if ($mine.Count -gt 0 -and $mine -notcontains $LanIp) {
-        throw "LanIp $LanIp is not assigned to this PC. Addresses found: $($mine -join ', '). Put the Ethernet/Wi-Fi IPv4 in dune-install.config.ps1."
+        throw "LanIp $LanIp is not assigned to the host. Addresses found: $($mine -join ', '). Put the Ethernet/Wi-Fi IPv4 in dune-install.config.ps1."
     }
 }
 
@@ -367,6 +367,6 @@ finally {
     if (Test-Path $envFile) { Remove-Item -Force $envFile -ErrorAction SilentlyContinue }
 }
 
-Write-Log "Join as $($cfg.WorldName) at $advertiseIp (bound on $($cfg.LanIp)). Do not join from this Windows host."
+Write-Log "Join as $($cfg.WorldName) at $advertiseIp (bound on $($cfg.LanIp)). Do not join from the host."
 Write-Log "Daily maintain: Restart-DuneBattlegroup.ps1 (queries Steam; rolls maps only if a newer depot is waiting)."
 Write-Log "=== Install-DuneBattlegroup end ==="

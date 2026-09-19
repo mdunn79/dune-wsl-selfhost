@@ -59,5 +59,5 @@ if ($LASTEXITCODE -ne 0) {
 Write-Log "Query Steam for app 4754530. Roll maps only if a newer depot is waiting or the world is down."
 Invoke-DuneMaintain
 
-Write-Log "Join from another PC (not this Windows host)."
+Write-Log "Join from another computer (not the host)."
 Write-Log "=== Dune battlegroup maintain end ==="
