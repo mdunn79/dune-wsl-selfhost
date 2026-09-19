@@ -2,7 +2,8 @@
 
 Runs Funcom’s **Linux** battlegroup inside WSL2. It does **not** use Funcom’s Hyper-V VM, Hyper-V Manager, or Windows 11 Pro.
 
-Players can join from your LAN or from the internet if you port-forward, same as any other dedicated server on this PC. Do **not** join from the same Windows machine that is hosting the world (WSL mirrored networking does not hairpin).
+Players can join from the LAN or from the internet if you port-forward. Do **not** join from the same Windows machine that is hosting the world (WSL mirrored networking does not hairpin).
+
 The scripts in this folder are MIT. The game files SteamCMD downloads are Funcom’s; this pack does not redistribute them.
 
 ## What you need
@@ -121,7 +122,7 @@ LAN-only: skip this. Internet: on the router, forward to this PC’s **`LanIp`**
 | TCP | `31982` | Join (AMQP) |
 | TCP | `31519` | Director |
 
-Set `AdvertiseIp` to your public WAN IPv4, then re-run the installer so Funcom advertises that address. Same idea as any other dedicated server on this box.
+Set `AdvertiseIp` to your public WAN IPv4, then re-run the installer so Funcom advertises that address.
 
 Do **not** port-forward TCP `18888` (Funcom file browser) unless you intend to expose that admin UI to the internet.
 
@@ -175,7 +176,7 @@ Set `PlayStyle` **before** the first successful world create. The installer appl
 - **Client cannot see the world.** Experimental client (not live), same build as the server, firewall, another PC (not this host). For internet: `AdvertiseIp` must be your WAN IPv4 and the router must forward to `LanIp`. For LAN-only: leave `AdvertiseIp` empty and use the real `LanIp`.
 - **WSL distro failed to start.** Often RAM (`WslMemory` too high for this PC) or virtualization off.
 
-This installer is meant for a from-scratch Home box. It will skip world create if a Funcom battlegroup namespace already exists in that Ubuntu.
+This installer is meant for a from-scratch Windows 11 Home machine. It will skip world create if a Funcom battlegroup namespace already exists in that Ubuntu.
 
 ## License
 
