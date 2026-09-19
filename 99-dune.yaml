@@ -1,0 +1,3 @@
+disable:
+  - traefik
+write-kubeconfig-mode: "644"
