@@ -33,7 +33,8 @@ function Get-RegionIndex([string]$Region) {
         "Oceania"        = "4"
         "South America"  = "5"
     }
-    if ($map.ContainsKey($Region)) { return $map[$Region] }
+    $hit = $map.Keys | Where-Object { $_.ToLowerInvariant() -eq $Region.Trim().ToLowerInvariant() } | Select-Object -First 1
+    if ($hit) { return $map[$hit] }
     throw "Region must be one of: $($map.Keys -join ', ')"
 }
 
@@ -54,13 +55,26 @@ function Show-WindowsFirewallAdvice {
 }
 
 function Resolve-PlayStyle($Cfg) {
-    $style = $Cfg.PlayStyle
+    $style = "$($Cfg.PlayStyle)".Trim()
     if ([string]::IsNullOrWhiteSpace($style)) { $style = "CasualPve" }
-    $ok = @("CasualPve", "Official")
-    if ($ok -notcontains $style) {
+    $ok = @{ "casualpve" = "CasualPve"; "official" = "Official" }
+    $key = $style.ToLowerInvariant()
+    if (-not $ok.ContainsKey($key)) {
         throw "PlayStyle must be CasualPve or Official (got '$style')"
     }
-    return $style
+    return $ok[$key]
+}
+
+function Assert-LanIp([string]$LanIp) {
+    if ($LanIp -match '^(127\.|0\.0\.0\.0$|::1$)') {
+        throw "LanIp $LanIp is not a LAN address. Use this PC's Ethernet/Wi-Fi IPv4 from ipconfig."
+    }
+    $mine = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -and $_.IPAddress -notlike "127.*" } |
+        Select-Object -ExpandProperty IPAddress)
+    if ($mine.Count -gt 0 -and $mine -notcontains $LanIp) {
+        throw "LanIp $LanIp is not assigned to this PC. Addresses found: $($mine -join ', '). Put the Ethernet/Wi-Fi IPv4 in dune-install.config.ps1."
+    }
 }
 
 function Get-InstallConfig {
@@ -158,31 +172,35 @@ hostAddressLoopback=true
 }
 
 function Set-WslHyperVFirewall {
-    $cur = Get-NetFirewallHyperVVMSetting -Name $WslCreatorId -ErrorAction SilentlyContinue
-    $alreadyAllow = $cur -and $cur.Enabled -and ("$($cur.DefaultInboundAction)" -eq "Allow")
-    if ($alreadyAllow) {
-        Write-Log "WSL Hyper-V firewall inbound already Allow; skipping VM setting"
-    } else {
-        Write-Log "Allowing inbound on the WSL Hyper-V firewall (Home still uses this for WSL2)"
-        Set-NetFirewallHyperVVMSetting -Name $WslCreatorId -Enabled True -DefaultInboundAction Allow
-    }
-    $rules = @(
-        @{ Name = "Dune-WSL-UDP-Game"; DisplayName = "Dune WSL UDP game"; Protocol = "UDP"; Ports = "7777-7810,7888-7941" },
-        @{ Name = "Dune-WSL-TCP-RMQ"; DisplayName = "Dune WSL TCP RMQ"; Protocol = "TCP"; Ports = "31982" },
-        @{ Name = "Dune-WSL-TCP-Admin"; DisplayName = "Dune WSL TCP admin"; Protocol = "TCP"; Ports = "18888,31519,11717" }
-    )
-    $created = 0
-    $skipped = 0
-    foreach ($r in $rules) {
-        if (Get-NetFirewallHyperVRule -Name $r.Name -ErrorAction SilentlyContinue) {
-            $skipped++
-            continue
+    try {
+        $cur = Get-NetFirewallHyperVVMSetting -Name $WslCreatorId -ErrorAction SilentlyContinue
+        $alreadyAllow = $cur -and $cur.Enabled -and ("$($cur.DefaultInboundAction)" -eq "Allow")
+        if ($alreadyAllow) {
+            Write-Log "WSL Hyper-V firewall inbound already Allow; skipping VM setting"
+        } else {
+            Write-Log "Allowing inbound on the WSL Hyper-V firewall (Home still uses this for WSL2)"
+            Set-NetFirewallHyperVVMSetting -Name $WslCreatorId -Enabled True -DefaultInboundAction Allow
         }
-        New-NetFirewallHyperVRule -Name $r.Name -DisplayName $r.DisplayName -Direction Inbound -Action Allow `
-            -Protocol $r.Protocol -LocalPorts $r.Ports -VMCreatorId $WslCreatorId | Out-Null
-        $created++
+        $rules = @(
+            @{ Name = "Dune-WSL-UDP-Game"; DisplayName = "Dune WSL UDP game"; Protocol = "UDP"; Ports = "7777-7810,7888-7941" },
+            @{ Name = "Dune-WSL-TCP-RMQ"; DisplayName = "Dune WSL TCP RMQ"; Protocol = "TCP"; Ports = "31982" },
+            @{ Name = "Dune-WSL-TCP-Admin"; DisplayName = "Dune WSL TCP admin"; Protocol = "TCP"; Ports = "18888,31519,11717" }
+        )
+        $created = 0
+        $skipped = 0
+        foreach ($r in $rules) {
+            if (Get-NetFirewallHyperVRule -Name $r.Name -ErrorAction SilentlyContinue) {
+                $skipped++
+                continue
+            }
+            New-NetFirewallHyperVRule -Name $r.Name -DisplayName $r.DisplayName -Direction Inbound -Action Allow `
+                -Protocol $r.Protocol -LocalPorts $r.Ports -VMCreatorId $WslCreatorId | Out-Null
+            $created++
+        }
+        Write-Log "WSL Hyper-V firewall rules: $created created, $skipped already present"
+    } catch {
+        Write-Log "WARNING: could not configure the WSL Hyper-V firewall ($($_.Exception.Message)). LAN join may fail until this works. Re-run the installer after WSL is up."
     }
-    Write-Log "WSL Hyper-V firewall rules: $created created, $skipped already present"
 }
 
 function Convert-WinPathToWsl([string]$WinPath) {
@@ -208,6 +226,7 @@ if ([string]::IsNullOrWhiteSpace($regionName) -and $cfg.RegionIndex) {
 }
 $regionIndex = Get-RegionIndex $regionName
 $playStyle = Resolve-PlayStyle $cfg
+Assert-LanIp $cfg.LanIp
 
 Write-Log "World '$($cfg.WorldName)' region '$regionName' ip $($cfg.LanIp) playstyle $playStyle"
 $restartNeeded = Ensure-WslFeature
@@ -224,13 +243,29 @@ $distro = Get-WslDistro $cfg.Distro
 if ($distro) {
     Write-Log "WSL distro $distro already present; skipping Ubuntu install"
 } else {
+    Write-Log "Setting WSL default version to 2"
+    & wsl.exe --set-default-version 2 2>$null | Out-Null
     Write-Log "Installing Ubuntu for WSL (no Hyper-V Manager / no Pro upgrade)"
     & wsl.exe --install -d Ubuntu --no-launch
     if ($LASTEXITCODE -ne 0) {
-        & wsl.exe --install -d Ubuntu
+        Write-Log "Ubuntu install exited $LASTEXITCODE. If Windows asked for a reboot, reboot and re-run. Not opening an interactive Ubuntu window."
+        throw "Ubuntu did not finish installing in this pass. Reboot if Windows asked, then re-run."
     }
-    $distro = Get-WslDistro "Ubuntu"
-    if (-not $distro) { throw "Ubuntu distro did not appear. Run wsl -l -v and re-run." }
+    $distro = $null
+    foreach ($n in 1..18) {
+        Start-Sleep -Seconds 5
+        $distro = Get-WslDistro "Ubuntu"
+        if ($distro) { break }
+        Write-Log "Waiting for Ubuntu distro to register ($n/18)"
+    }
+    if (-not $distro) { throw "Ubuntu distro did not appear. Reboot if Windows asked, then re-run. Check with: wsl -l -v" }
+}
+
+try {
+    & wsl.exe --set-default $distro | Out-Null
+    Write-Log "Default WSL distro set to $distro"
+} catch {
+    Write-Log "Could not set default WSL distro to $distro (daily Restart-DuneBattlegroup.ps1 may need: wsl --set-default $distro)"
 }
 
 $wslConfigChanged = Set-WslConfig $cfg

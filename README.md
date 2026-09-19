@@ -8,21 +8,25 @@ The scripts in this folder are MIT. The game files SteamCMD downloads are Funcom
 
 ## What you need
 
-- Windows 11 (Home is fine). You do **not** need WSL or Ubuntu already installed — the installer turns on the Windows WSL features, installs Ubuntu, and configures WSL2 (mirrored networking, systemd, WSL firewall).
+- **Windows 11 Home is enough** (22H2 or newer). You do **not** need WSL or Ubuntu already installed — the installer turns on the Windows WSL features, installs Ubuntu, and configures WSL2 (mirrored networking, systemd, WSL firewall).
+- **CPU virtualization enabled in BIOS/UEFI** (Intel VT-x / AMD-V / SVM). In Windows, Task Manager → Performance → CPU should say Virtualization: Enabled. If it says Disabled, turn it on in firmware or WSL2 will not start.
 - CPU with **AVX2** (Funcom’s Unreal requirement).
-- Enough RAM that you can give WSL a large allocation and still leave several GB for Windows. Funcom’s self-host wants a lot of RAM; **32 GB for WSL** is the default in the example config. On a 32 GB PC, lower `WslMemory` (for example `24GB`). On 64 GB, `32GB` is comfortable.
-- Disk space for Ubuntu, k3s, and the Linux Steam depot (plan on tens of GB).
-- A wired or Wi-Fi LAN. Clients must be other PCs on that network.
-- A Funcom **self-host token** from [account.duneawakening.com](https://account.duneawakening.com/).
-- The **Dune: Awakening Experimental** client on every machine that will play. The client build must match the Linux depot this installer downloads.
+- **About 32 GB RAM in the PC**, preferably more. Funcom’s self-host wants a large VM. The example gives **32 GB to WSL**; that only works on a 64 GB machine. On a 32 GB PC set `WslMemory` to `24GB`. A 16 GB PC is not enough.
+- **~80 GB free disk** (Ubuntu + k3s + Funcom’s Linux depot).
+- Internet on the host for Ubuntu, SteamCMD, and cert-manager.
+- A wired or Wi-Fi LAN, plus **a second PC** on that LAN to play. You cannot reliably join from the same Windows machine that hosts the world.
+- A Funcom **self-host token** from [account.duneawakening.com](https://account.duneawakening.com/) (Self-Host / experimental section for your account).
+- The **Dune: Awakening Experimental** client on every machine that will play (Steam; not the live/main branch). Client build must match the Linux depot this installer downloads.
 
 You do **not** need: WSL preinstalled, Ubuntu preinstalled, Windows 11 Pro, Hyper-V Manager, Funcom’s Windows SteamCMD `installdune.bat`, or a Steam account for the dedicated server (SteamCMD uses anonymous login).
 
-Windows itself may require **one reboot** the first time those WSL features are enabled. That is a Windows limit, not a manual WSL install. After reboot, run the same installer command again; it continues from there.
+First install often takes **45–120 minutes** (Steam depot + first map boot). Windows itself may require **one reboot** the first time WSL features are enabled. After reboot, run the same installer command again; it continues from there.
 
 ## 1. Put this folder on the host PC
 
-Download the files and keep them together in one directory, for example `C:\dune-wsl-selfhost`. The installer must be run from **that** folder. Do not scatter the scripts.
+On GitHub: **Code → Download ZIP**. Extract it. You should see `README.md` and `Install-DuneBattlegroup.ps1` in the **same** folder (GitHub often names the extract `dune-wsl-selfhost-main`). Move that folder somewhere stable, for example `C:\dune-wsl-selfhost`.
+
+The installer must be run from **that** folder. Do not scatter the scripts. If Windows marks the ZIP as blocked, right-click the `.ps1` files → Properties → Unblock, or in PowerShell: `Unblock-File .\*.ps1`.
 
 ## 2. Get your Funcom token
 
@@ -62,14 +66,19 @@ Optional, but worth checking:
 | `WslProcessors` | CPU cores given to WSL. Do not exceed this PC’s cores. |
 | `WslSwap` | WSL swap size. |
 
-**Finding `LanIp`:** in PowerShell, run `ipconfig`. Use the IPv4 of Ethernet or Wi-Fi on this LAN (often `192.168.x.x` or `10.x.x.x`). Skip `127.0.0.1` and virtual adapters you do not use for play.
+**Finding `LanIp`:** in PowerShell, run `ipconfig`. Use the IPv4 of Ethernet or Wi-Fi on this LAN (often `192.168.x.x` or `10.x.x.x`). Skip `127.0.0.1`, the example `192.168.0.10` unless it really is this PC, and VPN/virtual adapters. The installer refuses an address that is not assigned to this machine.
 
 **Do not share** `dune-install.config.ps1`. It can hold your token. The example file in this repo is only a template.
 
 ## 4. Run the installer (elevated)
 
-1. Start **Windows PowerShell as Administrator** (right-click → Run as administrator).
-2. `cd` into this folder.
+1. Start **Windows PowerShell as Administrator** (Start menu → type PowerShell → right-click **Windows PowerShell** → Run as administrator). A normal (non-admin) window will fail.
+2. Change to the folder from step 1, for example:
+
+   ```powershell
+   cd C:\dune-wsl-selfhost
+   ```
+
 3. Run:
 
 ```powershell
@@ -90,12 +99,14 @@ Watch `install-dune-battlegroup.log` in this folder if the window is hard to rea
 
 The installer **does not** change Windows Firewall. It **does** open the separate WSL Hyper-V firewall that WSL2 uses on Home.
 
-If Windows Firewall is on and LAN clients cannot join, allow **inbound** on this host:
+If Windows Firewall is on (it usually is) and LAN clients cannot join, allow **inbound** on this host. In the **same elevated PowerShell** window, you can run:
 
-- UDP `7777–7810` and `7888–7941` (game / IGW)
-- TCP `31982` (join), `31519` (Director), `18888` (File Browser)
+```powershell
+New-NetFirewallRule -DisplayName "Dune WSL UDP game" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 7777-7810,7888-7941
+New-NetFirewallRule -DisplayName "Dune WSL TCP join" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 31982,31519,18888
+```
 
-Windows Security → Firewall & network protection → Advanced settings → Inbound Rules, or equivalent `New-NetFirewallRule` commands you run yourself.
+Or: Windows Security → Firewall & network protection → Advanced settings → Inbound Rules, and allow those ports yourself.
 
 You do **not** need to port-forward on the router for LAN-only play.
 
@@ -138,9 +149,12 @@ Set `PlayStyle` **before** the first successful world create. The installer appl
 - **WorldName / Region / LanIp errors.** Edit `dune-install.config.ps1`. Region must match the table above exactly. LanIp must be this PC’s LAN IPv4.
 - **AVX2 error.** This CPU cannot run Funcom’s Unreal server.
 - **Reboot / re-run for WSL.** Expected on a PC that did not have WSL yet. After Windows comes back, run the installer again; it installs Ubuntu and continues.
-- **Ubuntu missing after install.** Re-run the installer (it runs `wsl --install -d Ubuntu`). If it still fails, `wsl -l -v` and try once more.
-- **Maps not Ready / join spinner.** Wait out the first Survival start. Re-run `Restart-DuneBattlegroup.ps1`. Confirm Windows Firewall (step 5) and that you are joining from another PC.
-- **Client cannot see the world.** Same Experimental build, correct `LanIp`, firewall, other PC on the same LAN.
+- **Virtualization disabled.** Enable VT-x / AMD-V in BIOS/UEFI, then re-run.
+- **Ubuntu missing after install.** Reboot if Windows asked, then re-run. Check with `wsl -l -v`.
+- **LanIp is not assigned to this PC.** The installer now checks this. Put the IPv4 from `ipconfig` for Ethernet or Wi-Fi, not the example `192.168.0.10` unless that really is this PC.
+- **Maps not Ready / join spinner.** Wait out the first Survival start (several minutes). Re-run `Restart-DuneBattlegroup.ps1`. Confirm Windows Firewall (step 5) and that you are joining from **another** PC.
+- **Client cannot see the world.** Experimental client (not live), same build as the server, correct `LanIp`, firewall, other PC on the same LAN.
+- **WSL distro failed to start.** Often RAM (`WslMemory` too high for this PC) or virtualization off.
 
 This installer is meant for a from-scratch Home box. It will skip world create if a Funcom battlegroup namespace already exists in that Ubuntu.
 
