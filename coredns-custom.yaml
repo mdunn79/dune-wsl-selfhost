@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+data:
+  # Game pods use ClusterFirstWithHostNet. CoreDNS otherwise forwards to WSL's
+  # 10.255.255.254 tunnel, which Unreal/libcurl cannot resolve (HP3 / FLS).
+  fls.server: |
+    sb-retail.fls.funcom.com:53 {
+        errors
+        cache 30
+        forward . 8.8.8.8 1.1.1.1
+    }

@@ -40,3 +40,21 @@ BG="${NS#funcom-seabass-}"
 getent hosts "${BG}-mq-game-svc" || true
 getent hosts "${BG}-mq-admin-svc" || true
 getent hosts "${BG}-db-dbdepl-svc" || true
+
+# hostNetwork Unreal/libcurl sometimes fails WSL DNS for Funcom FLS (HP3 identity).
+FLS_TAG='# dune-fls'
+python3 - "$FLS_TAG" <<'PY' || true
+import socket, sys
+tag = sys.argv[1]
+try:
+    ip = socket.getaddrinfo("sb-retail.fls.funcom.com", 443, socket.AF_INET)[0][4][0]
+except OSError as e:
+    print("skip FLS hosts pin:", e)
+    raise SystemExit(0)
+open("/home/dune/.dune/dune-fls-hosts.txt", "w").write(f"{ip} sb-retail.fls.funcom.com {tag}\n")
+print(f"{ip} sb-retail.fls.funcom.com")
+PY
+if [ -f /home/dune/.dune/dune-fls-hosts.txt ]; then
+  sudo sed -i "/${FLS_TAG}/d" /etc/hosts
+  sudo sh -c 'cat /home/dune/.dune/dune-fls-hosts.txt >> /etc/hosts'
+fi

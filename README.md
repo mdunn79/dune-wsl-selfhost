@@ -176,7 +176,7 @@ Funcom’s file browser (TCP `18888`) often **denies writes** to those inis. The
 - **Virtualization disabled.** Enable VT-x / AMD-V in BIOS/UEFI, then re-run.
 - **Ubuntu missing after install.** Reboot if Windows asked, then re-run. Check with `wsl -l -v`.
 - **LanIp is not assigned to the host.** Leave `LanIp` empty, or put the IPv4 from `ipconfig` for Ethernet or Wi-Fi.
-- **Maps not Ready / join spinner.** On the host run `Get-DuneStatus.ps1`. Wait until **Survival_1** is `Running` / `true`. Re-run `Restart-DuneBattlegroup.ps1` if it stays down. Confirm Windows Firewall (step 5) and that you are joining from **another** computer.
+- **HP3 / pending connection / could not verify identity.** The Hagga process could not reach Funcom FLS DNS (`sb-retail.fls.funcom.com`). The installer applies a CoreDNS stub and sets game-pod DNS to `8.8.8.8` with `ndots:1`. Re-run `Install.bat` or `Restart-DuneBattlegroup.ps1`. Join only when Survival is Running / true.
 - **Client cannot see the world.** Experimental client (not live), same build as the server, firewall, another computer (not the host). For internet: `AdvertiseIp` must be `"auto"` or the current public IPv4, and the router must forward to `LanIp`. For LAN-only: leave `AdvertiseIp` empty.
 - **WSL distro failed to start.** Often RAM (`WslMemory` too high for the host) or virtualization off.
 

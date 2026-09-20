@@ -95,6 +95,10 @@ lf "$SETUP_SRC/dune-bootstrap-kubernetes.sh" /home/dune/dune-bootstrap-kubernete
 lf "$SETUP_SRC/apply-k8s-hosts.sh" /home/dune/.dune/bin/apply-k8s-hosts.sh
 lf "$SETUP_SRC/dune-ensure-join.sh" /home/dune/.dune/bin/dune-ensure-join.sh
 lf "$SETUP_SRC/dune-maintain.sh" /home/dune/.dune/bin/dune-maintain.sh
+lf "$SETUP_SRC/dune-fix-fls-dns.sh" /home/dune/.dune/bin/dune-fix-fls-dns.sh
+if [ -f "$SETUP_SRC/coredns-custom.yaml" ]; then
+  sed 's/\r$//' "$SETUP_SRC/coredns-custom.yaml" > /home/dune/.dune/bin/coredns-custom.yaml
+fi
 chown dune:dune /home/dune/dune-bootstrap-kubernetes.sh /home/dune/.dune/bin/*
 
 echo "=== patch Funcom Alpine/OpenRC scripts for systemd ==="
@@ -139,6 +143,11 @@ if [ "$k3s_ok" -ne 1 ]; then
   echo "ERROR: k3s did not become ready" >&2
   systemctl status k3s --no-pager || true
   exit 1
+fi
+
+if [ -f "$SETUP_SRC/coredns-custom.yaml" ]; then
+  echo "=== CoreDNS Funcom FLS forward (HP3) ==="
+  sed 's/\r$//' "$SETUP_SRC/coredns-custom.yaml" | kubectl apply -f -
 fi
 
 echo "=== load images and Funcom operators ==="
@@ -345,6 +354,37 @@ chmod_filebrowser_usersettings
 
 echo "=== bind join ports ==="
 as_dune "DUNE_LAN_IP=$LAN_IP /home/dune/.dune/bin/dune-ensure-join.sh"
+
+if ! maps_ready; then
+  echo "=== wait maps Ready after FLS DNS rewrite (Survival/Overmap containers restart once) ==="
+  READY_TIMEOUT_SEC="${READY_TIMEOUT_SEC:-1200}"
+  STABLE_NEEDED="${READY_STABLE_CHECKS:-3}"
+  elapsed=0
+  stable=0
+  maps_ok=0
+  while [ "$elapsed" -lt "$READY_TIMEOUT_SEC" ]; do
+    st="$(as_dune /home/dune/.dune/bin/battlegroup status || true)"
+    echo "$st"
+    if echo "$st" | grep -qE 'Overmap[[:space:]]+Running[[:space:]]+true' \
+      && echo "$st" | grep -qE 'Survival_1[[:space:]]+Running[[:space:]]+true'; then
+      stable=$((stable + 1))
+      echo "Ready streak $stable/$STABLE_NEEDED"
+      if [ "$stable" -ge "$STABLE_NEEDED" ]; then
+        echo "Maps Ready"
+        maps_ok=1
+        break
+      fi
+    else
+      stable=0
+    fi
+    sleep 15
+    elapsed=$((elapsed + 15))
+  done
+  if [ "$maps_ok" -ne 1 ]; then
+    echo "ERROR: maps did not become Ready after FLS DNS rewrite" >&2
+    exit 1
+  fi
+fi
 
 rm -f "$TOKEN_FILE"
 echo "INSTALL_DONE NS=$NS BG=$BG bind=$LAN_IP advertise=$ADVERTISE_IP"

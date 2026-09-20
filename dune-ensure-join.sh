@@ -19,6 +19,9 @@ if [ -z "$LAN_IP" ]; then
 fi
 
 /home/dune/.dune/bin/apply-k8s-hosts.sh
+if [ -x /home/dune/.dune/bin/dune-fix-fls-dns.sh ]; then
+  /home/dune/.dune/bin/dune-fix-fls-dns.sh || true
+fi
 
 if [ "${REFRESH_FORWARDS:-0}" = "1" ]; then
   sudo pkill -f "port-forward.*${SVC}.*31982" >/dev/null 2>&1 || true
