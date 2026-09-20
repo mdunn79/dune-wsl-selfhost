@@ -4,8 +4,10 @@
     WorldName   = "My Sietch"
     # Funcom menu: Asia, Europe, North America, Oceania, South America
     Region      = "North America"
-    LanIp       = "192.168.0.10"
-    # Empty = LAN-only (clients use LanIp). For internet players, the host's public WAN IPv4.
+    # Empty = installer picks Ethernet/Wi-Fi. Set only if auto-detect is wrong.
+    LanIp       = ""
+    # Empty = LAN-only (Funcom lists LanIp). "auto" = look up the current public IPv4
+    # at install time for internet players. Need not be a static ISP address.
     AdvertiseIp = ""
     # CasualPve = NoPVP + faster/easier progression (bundled inis)
     # Official  = Funcom depot defaults (PvP/security zones as shipped)

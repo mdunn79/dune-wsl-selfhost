@@ -26,7 +26,7 @@ First install often takes **45–120 minutes** (Steam depot + first map boot). W
 
 On GitHub: **Code → Download ZIP**. Extract it. You should see `README.md` and `Install-DuneBattlegroup.ps1` in the **same** folder (GitHub often names the extract `dune-wsl-selfhost-main`). Move that folder somewhere stable on the host, for example `C:\dune-wsl-selfhost`.
 
-The installer must be run from **that** folder. Do not scatter the scripts. If Windows marks the ZIP as blocked, right-click the `.ps1` files → Properties → Unblock, or in PowerShell: `Unblock-File .\*.ps1`.
+The installer must be run from **that** folder. Do not scatter the scripts. If Windows marks the ZIP as blocked, right-click the `.ps1` / `.bat` files → Properties → Unblock, or in PowerShell: `Unblock-File .\*` .
 
 ## 2. Get your Funcom token
 
@@ -38,7 +38,7 @@ You can paste it into the config file in the next step, or leave that field empt
 
 ## 3. Create and edit your config
 
-Copy the example, then **change the placeholders** to match the host and the world you want:
+Copy the example, then set the world name and (if you want) the token:
 
 ```powershell
 copy .\dune-install.config.example.ps1 .\dune-install.config.ps1
@@ -53,8 +53,8 @@ Fill in at least these:
 | --- | --- |
 | `WorldName` | The name players see in the self-host list. No `'` or `\|`. Example: `"My Sietch"`. |
 | `Region` | Exactly one of: `Asia`, `Europe`, `North America`, `Oceania`, `South America`. This is Funcom’s region menu, not Windows locale. |
-| `LanIp` | The host’s **LAN IPv4** (Ethernet/Wi-Fi). Traffic binds here. Not `127.0.0.1`. See below. |
-| `AdvertiseIp` | Leave `""` for LAN-only. For internet players, the host’s **public WAN IPv4** (what the router forwards to the host). |
+| `LanIp` | Leave `""` unless auto-detect is wrong. The installer picks Ethernet, then Wi-Fi. Not `127.0.0.1`. |
+| `AdvertiseIp` | Leave `""` for LAN-only (typical). Funcom does **not** need a static ISP address. Internet: `"auto"` looks up the **current** public IPv4 at install time. |
 | `PlayStyle` | `CasualPve` or `Official`. See [Play styles](#play-styles). |
 | `FlsToken` | Your Funcom token in quotes, or `""` to be prompted. |
 
@@ -67,36 +67,32 @@ Optional, but worth checking:
 | `WslProcessors` | CPU cores given to WSL. Do not exceed the host’s core count. |
 | `WslSwap` | WSL swap size. |
 
-**Finding `LanIp`:** on the host, in PowerShell, run `ipconfig`. Use the IPv4 of Ethernet or Wi-Fi (often `192.168.x.x` or `10.x.x.x`). Skip `127.0.0.1`, the example `192.168.0.10` unless that really is the host, and VPN/virtual adapters. The installer refuses an address that is not assigned to the host.
+**Finding `LanIp` if you must set it:** on the host, in PowerShell, run `ipconfig`. Use the IPv4 of Ethernet or Wi-Fi (often `192.168.x.x` or `10.x.x.x`). Skip `127.0.0.1` and VPN/virtual adapters. The installer refuses an address that is not assigned to the host.
 
-**Finding `AdvertiseIp`:** LAN-only — leave it empty. Internet — the public IPv4 (router status page, or a “what is my IP” lookup **from the host**). That is the address Funcom gives clients. `LanIp` stays the private address the router forwards **to**.
+**Finding `AdvertiseIp`:** LAN-only — leave it empty. Funcom then lists `LanIp`. Internet is optional: set `AdvertiseIp = "auto"` so the installer looks up the current public IPv4 (a “what is my IP” result, not a static assignment). Funcom’s directory stores that literal IPv4; it does not take a hostname or DDNS name. If the ISP later changes the address, set `"auto"` again and re-run. `LanIp` stays the private address the router forwards **to**.
 
 Do not upload or share `dune-install.config.ps1`. It can hold the Funcom token. The example file in this repo is only a template.
 
 ## 4. Run the installer (elevated)
 
-1. On the host, start **Windows PowerShell as Administrator** (Start menu → type PowerShell → right-click **Windows PowerShell** → Run as administrator). A normal (non-admin) window will fail.
-2. Change to the folder from step 1, for example:
+1. Right-click **`Install.bat`** → **Run as administrator**. (Double-click also works; it will prompt for elevation.) A normal non-admin window will fail.
+2. Leave the window open. The first run can take a long time.
 
-   ```powershell
-   cd C:\dune-wsl-selfhost
-   ```
+The script, in order: enables Windows WSL features **if they are not already on**, installs Ubuntu **if the host has none**, writes `.wslconfig` only when mirrored networking is missing, turns on systemd if needed, opens the WSL Hyper-V firewall if needed, downloads Funcom’s Linux depot with SteamCMD if it is not already there, starts k3s, creates the world, then waits until Overmap **and** Survival stay Ready (up to about 20 minutes on that last wait). Survival often SIGSEGVs once on first boot and comes back; the installer waits through that.
 
-3. Run:
+Re-running is safe. Already-installed WSL, Ubuntu, packages, SteamCMD, the depot, k3s, operators, and an existing world are skipped. It will not wipe operators or recreate the world. If maps are already Ready, it only refreshes join ports.
+
+**If it tells you to reboot:** Windows needed a restart to finish enabling WSL. Reboot, then run `Install.bat` as administrator again. Do not install WSL yourself. Your `dune-install.config.ps1` is already there.
+
+**If it says it created `dune-install.config.ps1` and stopped:** that is expected on a first click with no config. Edit the file (step 3) and run `Install.bat` again.
+
+Watch `install-dune-battlegroup.log` in this folder if the window is hard to read. The installer redacts JWT-looking text in the log.
+
+Manual equivalent (elevated PowerShell in this folder):
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-DuneBattlegroup.ps1"
 ```
-
-The first run can take a long time. The script, in order: enables Windows WSL features **if they are not already on**, installs Ubuntu **if the host has none**, writes `.wslconfig` only when mirrored networking is missing, turns on systemd if needed, opens the WSL Hyper-V firewall if needed, downloads Funcom’s Linux depot with SteamCMD if it is not already there, starts k3s, creates the world, then waits until Overmap and Survival are Ready (up to about 20 minutes on that last wait). Leave the window open.
-
-Re-running is safe. Already-installed WSL, Ubuntu, packages, SteamCMD, the depot, k3s, operators, and an existing world are skipped. It will not wipe operators or recreate the world. If maps are already Ready, it only refreshes join ports.
-
-**If it tells you to reboot:** Windows needed a restart to finish enabling WSL. Reboot, open elevated PowerShell in this folder again, and run the same command. Do not install WSL yourself. Your `dune-install.config.ps1` is already there.
-
-**If it says it created `dune-install.config.ps1` and stopped:** that is expected on a first click with no config. Edit the file (step 3) and run the installer again.
-
-Watch `install-dune-battlegroup.log` in this folder if the window is hard to read. The installer redacts JWT-looking text in the log.
 
 ## 5. Windows Firewall (you do this)
 
@@ -122,11 +118,11 @@ LAN-only: skip this. Internet: on the router, forward to the host’s **`LanIp`*
 | TCP | `31982` | Join (AMQP) |
 | TCP | `31519` | Director |
 
-Set `AdvertiseIp` to the public WAN IPv4, then re-run the installer so Funcom advertises that address.
+Set `AdvertiseIp = "auto"` (or paste the current public IPv4), then re-run the installer so Funcom lists that address. It does **not** need to be a static IP from the ISP. If the WAN address changes later, run `"auto"` again.
 
 Do **not** port-forward TCP `18888` (Funcom file browser) unless you intend to expose that admin UI to the internet.
 
-If the ISP uses CGNAT (no real public IPv4), forwarding will not reach the host. LAN play still works.
+If the ISP uses CGNAT (no real public IPv4 at all), forwarding will not reach the host. LAN play still works.
 
 People on the same LAN, when `AdvertiseIp` is the WAN IP, usually join through the public listing. That needs NAT loopback on the router; many home routers have it. They still must not join from the host.
 
@@ -139,7 +135,7 @@ People on the same LAN, when `AdvertiseIp` is the WAN IP, usually join through t
 
 **Do not join from the host.** Mirrored WSL networking does not hairpin reliably; the list can spin forever if you try.
 
-First Survival boot can sit in a spinner for several minutes even after the installer reports maps Ready. Wait before assuming it failed.
+If the tab spins after you click the world, Hagga is usually still starting. On the host, run `Get-DuneStatus.ps1`. Join only when **Survival_1** is `Running` / `true`, not `PostLandscapePhysics`. That can take several minutes after the installer finishes, and again after a map restart.
 
 ## 8. Keep it running and patched
 
@@ -151,29 +147,37 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Restart-DuneBattlegro
 
 It queries Steam for app `4754530`, then updates and rolls maps **only** if a newer public build is waiting or the world is not Ready. A no-op is about 1–2 minutes. A real patch can take around 45 minutes. Output goes to `restart-dune-battlegroup.log`.
 
-Optional: Task Scheduler → At log on → run that same command with **Start in** set to this folder.
+Optional: Task Scheduler → At log on → run `Restart-DuneBattlegroup.ps1` with **Start in** set to this folder.
 
-If the host has more than one WSL distro, make Ubuntu the default (`wsl --set-default Ubuntu`) so the maintain script finds the `dune` user.
+To see if the world is joinable without rolling maps:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Get-DuneStatus.ps1"
+```
+
+If the host has more than one WSL distro, keep `Distro = "Ubuntu"` in the config (the installer sets that distro as default).
 
 ## Play styles
 
 Set `PlayStyle` **before** the first successful world create. The installer applies Funcom UserSettings at world setup.
 
-**`CasualPve`** copies the bundled `UserEngine.ini`, `UserGame.ini`, and `UserServerCustomSettings.ini`. In short: **NoPVP**, 2× mining, 2.5× global XP, cheaper/faster crafting, slower heat/thirst, less sandworm vehicle grief. The display name is set to your `WorldName`. You can change the inis later with Funcom’s file browser (TCP `18888`) and a battlegroup restart.
+**`CasualPve`** copies the bundled `UserEngine.ini`, `UserGame.ini`, and `UserServerCustomSettings.ini`. In short: **NoPVP**, 2× mining, 2.5× global XP, cheaper/faster crafting, slower heat/thirst, less sandworm vehicle grief. The display name is set to your `WorldName`.
+
+Funcom’s file browser (TCP `18888`) often **denies writes** to those inis. The installer chmods the UserSettings volume so the UI can save; if it still cannot, edit the three inis in this folder, copy them over Funcom’s `setup/config` copies inside WSL, then `battlegroup apply-default-usersettings` and a battlegroup restart. Yield/UserSettings never hot-reload.
 
 **`Official`** leaves Funcom’s depot defaults (PvP / security zones as Funcom ships them).
 
 ## If something goes wrong
 
-- **“Run this script from an elevated PowerShell window.”** Re-open PowerShell as Administrator on the host.
-- **WorldName / Region / LanIp errors.** Edit `dune-install.config.ps1`. Region must match the table above exactly. `LanIp` must be the host’s LAN IPv4.
+- **“Run this script from an elevated PowerShell window.”** Use `Install.bat` as administrator, or re-open PowerShell as Administrator on the host.
+- **WorldName / Region / LanIp errors.** Edit `dune-install.config.ps1`. Region must match the table above exactly. Leave `LanIp` empty to auto-detect, or put the host’s Ethernet/Wi-Fi IPv4 from `ipconfig`.
 - **AVX2 error.** That CPU cannot run Funcom’s Unreal server.
 - **Reboot / re-run for WSL.** Expected on a host that did not have WSL yet. After Windows comes back, run the installer again; it installs Ubuntu and continues.
 - **Virtualization disabled.** Enable VT-x / AMD-V in BIOS/UEFI, then re-run.
 - **Ubuntu missing after install.** Reboot if Windows asked, then re-run. Check with `wsl -l -v`.
-- **LanIp is not assigned to the host.** Put the IPv4 from `ipconfig` for Ethernet or Wi-Fi, not the example `192.168.0.10` unless that really is the host.
-- **Maps not Ready / join spinner.** Wait out the first Survival start (several minutes). Re-run `Restart-DuneBattlegroup.ps1`. Confirm Windows Firewall (step 5) and that you are joining from **another** computer.
-- **Client cannot see the world.** Experimental client (not live), same build as the server, firewall, another computer (not the host). For internet: `AdvertiseIp` must be the WAN IPv4 and the router must forward to `LanIp`. For LAN-only: leave `AdvertiseIp` empty and use the real `LanIp`.
+- **LanIp is not assigned to the host.** Leave `LanIp` empty, or put the IPv4 from `ipconfig` for Ethernet or Wi-Fi.
+- **Maps not Ready / join spinner.** On the host run `Get-DuneStatus.ps1`. Wait until **Survival_1** is `Running` / `true`. Re-run `Restart-DuneBattlegroup.ps1` if it stays down. Confirm Windows Firewall (step 5) and that you are joining from **another** computer.
+- **Client cannot see the world.** Experimental client (not live), same build as the server, firewall, another computer (not the host). For internet: `AdvertiseIp` must be `"auto"` or the current public IPv4, and the router must forward to `LanIp`. For LAN-only: leave `AdvertiseIp` empty.
 - **WSL distro failed to start.** Often RAM (`WslMemory` too high for the host) or virtualization off.
 
 This installer is meant for a from-scratch Windows 11 Home machine. It will skip world create if a Funcom battlegroup namespace already exists in that Ubuntu.

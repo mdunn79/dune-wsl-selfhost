@@ -51,7 +51,7 @@ function Show-WindowsFirewallAdvice {
     Write-Log "If clients cannot join, allow inbound on the host (you do this, not the script):"
     Write-Log "  UDP 7777-7810 and 7888-7941 (game / IGW)"
     Write-Log "  TCP 31982 (join), 31519 (Director), 18888 (File Browser, keep off the internet)"
-    Write-Log "For internet players: port-forward those UDP ranges and TCP 31982 (and 31519) to LanIp. Set AdvertiseIp to the public WAN IPv4."
+    Write-Log "For internet players: port-forward those UDP ranges and TCP 31982 (and 31519) to LanIp. Set AdvertiseIp to auto (or the current public IPv4). It does not need to be a static ISP address."
     Write-Log "WSL has a separate Hyper-V firewall; this installer does configure that one."
 }
 
@@ -66,16 +66,61 @@ function Resolve-PlayStyle($Cfg) {
     return $ok[$key]
 }
 
+function Get-PublicIpv4 {
+    $urls = @(
+        "https://api.ipify.org",
+        "https://ifconfig.me/ip",
+        "https://icanhazip.com"
+    )
+    foreach ($u in $urls) {
+        try {
+            $raw = [string](Invoke-RestMethod -Uri $u -TimeoutSec 8)
+            $ip = $raw.Trim()
+            if ($ip -match '^\d{1,3}(\.\d{1,3}){3}$' -and $ip -notmatch '^(10\.|127\.|0\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)') {
+                Write-Log "AdvertiseIp auto-detected as $ip (current public IPv4; not a static ISP assignment)"
+                return $ip
+            }
+        } catch {
+            Write-Log "Public IPv4 lookup failed at $u ($($_.Exception.Message))"
+        }
+    }
+    throw "Could not detect the current public IPv4. Leave AdvertiseIp empty for LAN-only, or set the address a 'what is my IP' lookup shows right now."
+}
+
 function Resolve-AdvertiseIp($Cfg) {
     $adv = "$($Cfg.AdvertiseIp)".Trim()
     if ([string]::IsNullOrWhiteSpace($adv)) { return [string]$Cfg.LanIp }
+    if ($adv -match '^(auto|public)$') { return Get-PublicIpv4 }
     if ($adv -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
-        throw "AdvertiseIp must be an IPv4 address (the host's public WAN IP), or leave it empty for LAN-only."
+        throw "AdvertiseIp must be empty (LAN), 'auto' (look up current public IPv4), or a dotted IPv4. Funcom does not accept a hostname or DDNS name."
     }
     if ($adv -match '^(127\.|0\.0\.0\.0$)') {
         throw "AdvertiseIp cannot be $adv"
     }
     return $adv
+}
+
+function Get-DefaultLanIp {
+    $skip = 'Loopback|vEthernet|WSL|Virtual|Hyper-V|VMware|VirtualBox|VPN|Teredo|Bluetooth|Tailscale|Hamachi|ZeroTier|Docker'
+    $ranked = @()
+    foreach ($c in @(Get-NetIPConfiguration -ErrorAction SilentlyContinue)) {
+        $alias = [string]$c.InterfaceAlias
+        if ($alias -match $skip) { continue }
+        $addr = @($c.IPv4Address) | Where-Object {
+            $_.IPAddress -and $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*'
+        } | Select-Object -First 1
+        if (-not $addr) { continue }
+        $score = 1
+        if ($alias -match 'Ethernet') { $score = 3 }
+        elseif ($alias -match 'Wi-?Fi|Wireless') { $score = 2 }
+        $ranked += [pscustomobject]@{ Ip = $addr.IPAddress; Alias = $alias; Score = $score }
+    }
+    $best = $ranked | Sort-Object Score -Descending | Select-Object -First 1
+    if ($best) {
+        Write-Log "LanIp auto-detected as $($best.Ip) ($($best.Alias))"
+        return [string]$best.Ip
+    }
+    return $null
 }
 
 function Assert-LanIp([string]$LanIp) {
@@ -95,7 +140,7 @@ function Get-InstallConfig {
     $example = Join-Path $SetupRoot "dune-install.config.example.ps1"
     if (-not (Test-Path $path)) {
         Copy-Item $example $path
-        throw "Created $path — set WorldName, Region, LanIp, PlayStyle, and FlsToken, then re-run."
+        throw "Created $path — set WorldName, Region, PlayStyle, and FlsToken (LanIp can stay empty), then re-run."
     }
     return (Get-Content -Raw $path | Invoke-Expression)
 }
@@ -232,13 +277,20 @@ if (-not (Test-Admin)) {
 
 $cfg = Get-InstallConfig
 if ([string]::IsNullOrWhiteSpace($cfg.WorldName)) { throw "WorldName is required in dune-install.config.ps1" }
-if ([string]::IsNullOrWhiteSpace($cfg.LanIp)) { throw "LanIp is required in dune-install.config.ps1" }
 $regionName = $cfg.Region
 if ([string]::IsNullOrWhiteSpace($regionName) -and $cfg.RegionIndex) {
     $regionName = @{ "1"="Asia"; "2"="Europe"; "3"="North America"; "4"="Oceania"; "5"="South America" }[$cfg.RegionIndex.ToString()]
 }
 $regionIndex = Get-RegionIndex $regionName
 $playStyle = Resolve-PlayStyle $cfg
+$lanIp = "$($cfg.LanIp)".Trim()
+if ([string]::IsNullOrWhiteSpace($lanIp) -or $lanIp -eq "192.168.0.10") {
+    $lanIp = Get-DefaultLanIp
+    if ([string]::IsNullOrWhiteSpace($lanIp)) {
+        throw "Could not auto-detect LanIp. Set the host Ethernet/Wi-Fi IPv4 in dune-install.config.ps1 (ipconfig)."
+    }
+    $cfg.LanIp = $lanIp
+}
 Assert-LanIp $cfg.LanIp
 $advertiseIp = Resolve-AdvertiseIp $cfg
 

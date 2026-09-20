@@ -13,7 +13,13 @@ $ErrorActionPreference = "Stop"
 
 $LogFile = Join-Path $PSScriptRoot "restart-dune-battlegroup.log"
 $WslUser = "dune"
+$WslDistro = "Ubuntu"
 $ReadyTimeoutSec = 1200
+$cfgPath = Join-Path $PSScriptRoot "dune-install.config.ps1"
+if (Test-Path $cfgPath) {
+    $cfg = Get-Content -Raw $cfgPath | Invoke-Expression
+    if ($cfg.Distro) { $WslDistro = [string]$cfg.Distro }
+}
 
 function Write-Log([string]$Message) {
     # WSL/SteamCMD emit LF and CR; Write-Host of LF-only text staircases on Windows consoles.
@@ -31,7 +37,7 @@ function Invoke-DuneMaintain {
     # WSL stderr (Funcom ln, kubectl) must not become terminating ErrorRecords.
     $savedEap = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    & wsl.exe -u $WslUser -- bash -lc $cmd 2>&1 | ForEach-Object {
+    & wsl.exe -d $WslDistro -u $WslUser -- bash -lc $cmd 2>&1 | ForEach-Object {
         if ($null -eq $_) { return }
         $text = $_
         if ($_ -is [System.Management.Automation.ErrorRecord]) {
@@ -50,10 +56,10 @@ function Invoke-DuneMaintain {
 
 Write-Log "=== Dune battlegroup maintain begin (running + patched if needed) ==="
 
-Write-Log "Making sure WSL is up..."
-& wsl.exe -u $WslUser -- true
+Write-Log "Making sure WSL distro $WslDistro is up..."
+& wsl.exe -d $WslDistro -u $WslUser -- true
 if ($LASTEXITCODE -ne 0) {
-    throw "WSL did not start for user $WslUser"
+    throw "WSL distro $WslDistro did not start for user $WslUser"
 }
 
 Write-Log "Query Steam for app 4754530. Roll maps only if a newer depot is waiting or the world is down."

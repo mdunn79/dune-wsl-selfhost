@@ -106,12 +106,19 @@ maps_ready() {
 
 wait_maps_ready() {
   echo "Waiting up to ${READY_TIMEOUT_SEC}s for Overmap + Survival Ready..."
-  local elapsed=0
+  local elapsed=0 stable=0
+  local need="${READY_STABLE_CHECKS:-3}"
   while [ "$elapsed" -lt "$READY_TIMEOUT_SEC" ]; do
     "$BG" status || true
     if maps_ready; then
-      echo "Maps Ready"
-      return 0
+      stable=$((stable + 1))
+      echo "Ready streak $stable/$need"
+      if [ "$stable" -ge "$need" ]; then
+        echo "Maps Ready"
+        return 0
+      fi
+    else
+      stable=0
     fi
     sleep 15
     elapsed=$((elapsed + 15))

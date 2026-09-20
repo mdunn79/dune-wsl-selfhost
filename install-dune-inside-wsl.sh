@@ -77,9 +77,10 @@ if [ -f "$SCRIPTS/setup.sh" ] && [ -d "$DOWNLOAD_PATH/images/operators/crds" ]; 
   echo "=== SteamCMD depot already present; skipping app_update ==="
 else
   echo "=== SteamCMD Linux depot 4754530 ==="
-  as_dune "export HOME=/home/dune PATH=/home/dune/.local/bin:\$PATH
+  # Close stdin so a SteamCMD "Retry? [Y/N]" cannot hang an unattended install.
+  sudo -u dune -H bash -lc "export HOME=/home/dune PATH=/home/dune/.local/bin:\$PATH
     /home/dune/Steam/steamcmd.sh +@ShutdownOnFailedCommand 1 +@NoPromptForPassword 1 \
-      +force_install_dir $DOWNLOAD_PATH +login anonymous +app_update 4754530 +quit"
+      +force_install_dir $DOWNLOAD_PATH +login anonymous +app_update 4754530 +quit" < /dev/null
   chown -R dune:dune /home/dune/.dune /home/dune/Steam /home/dune/.local
 fi
 if [ ! -f "$SCRIPTS/setup.sh" ] || [ ! -d "$DOWNLOAD_PATH/images/operators/crds" ]; then
@@ -280,6 +281,17 @@ maps_ready() {
     && echo "$st" | grep -qE 'Survival_1[[:space:]]+Running[[:space:]]+true'
 }
 
+chmod_filebrowser_usersettings() {
+  local dep
+  dep="$(sudo kubectl get deploy -n "$NS" -o name 2>/dev/null | grep -E 'fb-deploy|filebrowser' | head -n1 || true)"
+  if [ -z "$dep" ]; then
+    echo "File Browser deploy not found; skipping UserSettings chmod"
+    return 0
+  fi
+  sudo kubectl exec -n "$NS" "$dep" -- sh -c 'chmod -R a+rw /srv/UserSettings 2>/dev/null || true' || true
+  echo "File Browser UserSettings made writable (UI often denies otherwise)"
+}
+
 if [ "$WORLD_EXISTS" -eq 1 ] && maps_ready; then
   echo "Maps already Ready; skipping image apply, usersettings, and map wait"
 else
@@ -299,18 +311,26 @@ else
     echo "World exists but maps are not Ready; starting battlegroup only"
     as_dune "$SCRIPTS/battlegroup.sh start" || true
   fi
-  echo "=== wait maps Ready ==="
+  echo "=== wait maps Ready (Survival must stay Running/true; first Ready can flip) ==="
   READY_TIMEOUT_SEC="${READY_TIMEOUT_SEC:-1200}"
+  STABLE_NEEDED="${READY_STABLE_CHECKS:-3}"
   elapsed=0
+  stable=0
   maps_ok=0
   while [ "$elapsed" -lt "$READY_TIMEOUT_SEC" ]; do
     st="$(as_dune /home/dune/.dune/bin/battlegroup status || true)"
     echo "$st"
     if echo "$st" | grep -qE 'Overmap[[:space:]]+Running[[:space:]]+true' \
       && echo "$st" | grep -qE 'Survival_1[[:space:]]+Running[[:space:]]+true'; then
-      echo "Maps Ready"
-      maps_ok=1
-      break
+      stable=$((stable + 1))
+      echo "Ready streak $stable/$STABLE_NEEDED"
+      if [ "$stable" -ge "$STABLE_NEEDED" ]; then
+        echo "Maps Ready"
+        maps_ok=1
+        break
+      fi
+    else
+      stable=0
     fi
     sleep 15
     elapsed=$((elapsed + 15))
@@ -320,6 +340,8 @@ else
     exit 1
   fi
 fi
+
+chmod_filebrowser_usersettings
 
 echo "=== bind join ports ==="
 as_dune "DUNE_LAN_IP=$LAN_IP /home/dune/.dune/bin/dune-ensure-join.sh"
