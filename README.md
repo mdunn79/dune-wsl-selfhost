@@ -135,7 +135,9 @@ People on the same LAN, when `AdvertiseIp` is the WAN IP, usually join through t
 
 **Do not join from the host.** Mirrored WSL networking does not hairpin reliably; the list can spin forever if you try.
 
-If the tab spins after you click the world, Hagga is usually still starting. On the host, run `Get-DuneStatus.ps1`. Join only when **Survival_1** is `Running` / `true`, not `PostLandscapePhysics`. That can take several minutes after the installer finishes, and again after a map restart.
+If the tab spins after you click the world, Hagga is usually still starting. On the host, run `Get-DuneStatus.ps1`. Join only when **Survival_1** is `Running` / `true`, not `PostLandscapePhysics`, and not while Gateway is `Modifying`. That can take several minutes after the installer finishes, and again after a depot update.
+
+**In queue and the world also shows offline.** The listing is still in Funcom’s directory, but Survival is not Ready yet or director TCP `31519` is not bound. Wait until `Get-DuneStatus.ps1` shows both maps Running / true and `31519` listening. Join only from another computer.
 
 ## 8. Keep it running and patched
 
@@ -145,7 +147,7 @@ From PowerShell in this folder on the host (does not take the world down if Stea
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Restart-DuneBattlegroup.ps1"
 ```
 
-It queries Steam for app `4754530`, then updates and rolls maps **only** if a newer public build is waiting or the world is not Ready. A no-op is about 1–2 minutes. A real patch can take around 45 minutes. Output goes to `restart-dune-battlegroup.log`.
+It queries Steam for app `4754530`, then updates and rolls maps **only** if a newer public build is waiting or the world is not Ready. After a real patch it waits until Gateway is Healthy and both maps stay Running / true (old pods still showing Running during Modifying are ignored), then binds join TCP `31982` / `31519`. A no-op is about 1–2 minutes. A real patch can take around 45 minutes. Output goes to `restart-dune-battlegroup.log`.
 
 Optional: Task Scheduler → At log on → run `Restart-DuneBattlegroup.ps1` with **Start in** set to this folder.
 
@@ -176,6 +178,7 @@ Funcom’s file browser (TCP `18888`) often **denies writes** to those inis. The
 - **Virtualization disabled.** Enable VT-x / AMD-V in BIOS/UEFI, then re-run.
 - **Ubuntu missing after install.** Reboot if Windows asked, then re-run. Check with `wsl -l -v`.
 - **LanIp is not assigned to the host.** Leave `LanIp` empty, or put the IPv4 from `ipconfig` for Ethernet or Wi-Fi.
+- **In queue / server offline after an update.** A depot roll restarts Hagga. The client can list the world while Survival is still `Startup` / `PostLandscapePhysics`, or while director `31519` is not listening. Run `Get-DuneStatus.ps1`. Join only when Overmap and Survival_1 are Running / true and Gateway is Ready (not Modifying). `Restart-DuneBattlegroup.ps1` now waits for that and retries the director bind.
 - **HP3 / pending connection / could not verify identity.** The Hagga process could not reach Funcom FLS DNS (`sb-retail.fls.funcom.com`). The installer applies a CoreDNS stub and sets game-pod DNS to `8.8.8.8` with `ndots:1`. Re-run `Install.bat` or `Restart-DuneBattlegroup.ps1`. Join only when Survival is Running / true.
 - **Client cannot see the world.** Experimental client (not live), same build as the server, firewall, another computer (not the host). For internet: `AdvertiseIp` must be `"auto"` or the current public IPv4, and the router must forward to `LanIp`. For LAN-only: leave `AdvertiseIp` empty.
 - **WSL distro failed to start.** Often RAM (`WslMemory` too high for the host) or virtualization off.

@@ -49,13 +49,20 @@ fi
 if sudo ss -ltn | grep -qE ':31519\b'; then
   echo "already listening ${LAN_IP}:31519 (director)"
 else
-  sudo pkill -f "port-forward.*${BGD}.*31519" >/dev/null 2>&1 || true
-  nohup sudo kubectl -n "$NS" port-forward --address "$LAN_IP" "svc/${BGD}" 31519:11717 \
-    >/home/dune/.dune/director.log 2>&1 &
-  sleep 2
-  if sudo ss -ltn | grep -qE ':31519\b'; then
-    echo "Director listening on ${LAN_IP}:31519"
-  else
+  bound=0
+  for i in 1 2 3 4 5 6; do
+    sudo pkill -f "port-forward.*${BGD}.*31519" >/dev/null 2>&1 || true
+    nohup sudo kubectl -n "$NS" port-forward --address "$LAN_IP" "svc/${BGD}" 31519:11717 \
+      >/home/dune/.dune/director.log 2>&1 &
+    sleep 3
+    if sudo ss -ltn | grep -qE ':31519\b'; then
+      echo "Director listening on ${LAN_IP}:31519"
+      bound=1
+      break
+    fi
+    echo "director 31519 not up yet ($i/6)"
+  done
+  if [ "$bound" -ne 1 ]; then
     echo "WARNING: ${LAN_IP}:31519 (director) is not listening" >&2
     tail -n 15 /home/dune/.dune/director.log >&2 || true
   fi

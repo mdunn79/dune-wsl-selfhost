@@ -282,12 +282,50 @@ else
   echo "BattleGroup advertise IP already $ADVERTISE_IP; skipping patch"
 fi
 
+maps_joinable() {
+  local st="$1"
+  echo "$st" | grep -qiE '[[:space:]](Modifying|Suspended)[[:space:]]' && return 1
+  echo "$st" | grep -qE 'Healthy' \
+    && echo "$st" | grep -qE 'Overmap[[:space:]]+Running[[:space:]]+true' \
+    && echo "$st" | grep -qE 'Survival_1[[:space:]]+Running[[:space:]]+true'
+}
+
 maps_ready() {
   local st
   st="$(as_dune /home/dune/.dune/bin/battlegroup status || true)"
   echo "$st"
-  echo "$st" | grep -qE 'Overmap[[:space:]]+Running[[:space:]]+true' \
-    && echo "$st" | grep -qE 'Survival_1[[:space:]]+Running[[:space:]]+true'
+  maps_joinable "$st"
+}
+
+wait_joinable() {
+  local why="$1"
+  echo "=== wait maps Ready ($why) ==="
+  READY_TIMEOUT_SEC="${READY_TIMEOUT_SEC:-1200}"
+  STABLE_NEEDED="${READY_STABLE_CHECKS:-3}"
+  elapsed=0
+  stable=0
+  maps_ok=0
+  while [ "$elapsed" -lt "$READY_TIMEOUT_SEC" ]; do
+    st="$(as_dune /home/dune/.dune/bin/battlegroup status || true)"
+    echo "$st"
+    if maps_joinable "$st"; then
+      stable=$((stable + 1))
+      echo "Ready streak $stable/$STABLE_NEEDED"
+      if [ "$stable" -ge "$STABLE_NEEDED" ]; then
+        echo "Maps Ready"
+        maps_ok=1
+        break
+      fi
+    else
+      stable=0
+    fi
+    sleep 15
+    elapsed=$((elapsed + 15))
+  done
+  if [ "$maps_ok" -ne 1 ]; then
+    echo "ERROR: maps did not become Ready ($why)" >&2
+    exit 1
+  fi
 }
 
 chmod_filebrowser_usersettings() {

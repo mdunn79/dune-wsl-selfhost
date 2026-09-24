@@ -14,5 +14,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Could not read battlegroup status from distro $distro. Is Ubuntu installed and the world created?"
 }
 Write-Host ""
-Write-Host "Join from another computer only when Overmap and Survival_1 are both Running / true."
-Write-Host "A spinner in the server tab usually means Survival is still starting (PostLandscapePhysics), not that the listing is missing."
+Write-Host "Join from another computer only when Overmap and Survival_1 are both Running / true and Gateway is Ready (not Modifying)."
+Write-Host "Queue + offline usually means Survival is still starting, or director TCP 31519 is not bound."
+Write-Host "Checking LAN join listeners..."
+& wsl.exe -d $distro -u dune -- bash -lc "sudo ss -ltn | grep -E ':31982|:31519' || true"

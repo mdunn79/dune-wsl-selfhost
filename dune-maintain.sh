@@ -100,12 +100,14 @@ recover_operators_if_stale() {
 maps_ready() {
   local status
   status="$("$BG" status 2>/dev/null || true)"
-  echo "$status" | grep -qE 'Overmap[[:space:]]+Running[[:space:]]+true' \
+  echo "$status" | grep -qiE '[[:space:]](Modifying|Suspended)[[:space:]]' && return 1
+  echo "$status" | grep -qE 'Healthy' \
+    && echo "$status" | grep -qE 'Overmap[[:space:]]+Running[[:space:]]+true' \
     && echo "$status" | grep -qE 'Survival_1[[:space:]]+Running[[:space:]]+true'
 }
 
 wait_maps_ready() {
-  echo "Waiting up to ${READY_TIMEOUT_SEC}s for Overmap + Survival Ready..."
+  echo "Waiting up to ${READY_TIMEOUT_SEC}s for Overmap + Survival Ready (ignore stale Running during Modifying)..."
   local elapsed=0 stable=0
   local need="${READY_STABLE_CHECKS:-3}"
   while [ "$elapsed" -lt "$READY_TIMEOUT_SEC" ]; do
@@ -230,6 +232,11 @@ if [ "$rolled" -eq 1 ]; then
   wait_maps_ready
   echo "=== Refresh /etc/hosts and rebind LAN join/director ==="
   REFRESH_FORWARDS=1 "$JOIN"
+  if ! maps_ready; then
+    echo "=== wait maps Ready after FLS DNS rewrite (Survival/Overmap restart once) ==="
+    wait_maps_ready
+    "$JOIN"
+  fi
 else
   echo "=== Maps already Ready on current depot; bind join ports only if missing ==="
   "$JOIN"
