@@ -51,7 +51,7 @@ function Show-WindowsFirewallAdvice {
     Write-Log "If clients cannot join, allow inbound on the host (you do this, not the script):"
     Write-Log "  UDP 7777-7810 and 7888-7941 (game / IGW)"
     Write-Log "  TCP 31982 (join), 31519 (Director), 18888 (File Browser, keep off the internet)"
-    Write-Log "For internet players: port-forward those UDP ranges and TCP 31982 (and 31519) to LanIp. Set AdvertiseIp to auto (or the current public IPv4). It does not need to be a static ISP address."
+    Write-Log "For internet players: port-forward those UDP ranges and TCP 31982 (and 31519) to LanIp. Set AdvertiseIp to auto (or the current public IPv4). The installer writes that address into Funcom's listing AND Unreal -ExternalAddress; the game still binds LanIp. Do not set k3s node-external-ip to the WAN address."
     Write-Log "WSL has a separate Hyper-V firewall; this installer does configure that one."
 }
 

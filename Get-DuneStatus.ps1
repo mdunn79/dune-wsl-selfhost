@@ -16,5 +16,6 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "Join from another computer only when Overmap and Survival_1 are both Running / true and Gateway is Ready (not Modifying)."
 Write-Host "Queue + offline usually means Survival is still starting, or director TCP 31519 is not bound."
-Write-Host "Checking LAN join listeners..."
-& wsl.exe -d $distro -u dune -- bash -lc "sudo ss -ltn | grep -E ':31982|:31519' || true"
+Write-Host "Internet timeouts with a visible listing usually mean Unreal still has no -ExternalAddress (LAN bind only)."
+Write-Host "Checking advertise vs bind and LAN join listeners..."
+& wsl.exe -d $distro -u dune -- bash -lc "/home/dune/.dune/bin/dune-set-advertise-ip.sh --status; echo; sudo ss -ltn | grep -E ':31982|:31519' || true; sudo ss -lun | grep -E ':7777|:7778|:7888|:7889' || true"

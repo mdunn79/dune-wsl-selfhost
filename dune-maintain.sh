@@ -226,6 +226,16 @@ if [ "$need_update" -eq 1 ]; then
   rolled=1
 fi
 
+if [ -x /home/dune/.dune/bin/dune-set-advertise-ip.sh ]; then
+  echo "=== refresh advertise IP (listing + Unreal ExternalAddress; bind stays LAN) ==="
+  adv_out="$(/home/dune/.dune/bin/dune-set-advertise-ip.sh 2>&1 || true)"
+  echo "$adv_out"
+  if echo "$adv_out" | grep -q 'changed=yes'; then
+    echo "Advertise IP changed; maps will roll"
+    rolled=1
+  fi
+fi
+
 if [ "$rolled" -eq 1 ]; then
   echo "=== Ensure battlegroup is started after a start/update ==="
   "$BG" start

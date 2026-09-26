@@ -69,7 +69,9 @@ Optional, but worth checking:
 
 **Finding `LanIp` if you must set it:** on the host, in PowerShell, run `ipconfig`. Use the IPv4 of Ethernet or Wi-Fi (often `192.168.x.x` or `10.x.x.x`). Skip `127.0.0.1` and VPN/virtual adapters. The installer refuses an address that is not assigned to the host.
 
-**Finding `AdvertiseIp`:** LAN-only — leave it empty. Funcom then lists `LanIp`. Internet is optional: set `AdvertiseIp = "auto"` so the installer looks up the current public IPv4 (a “what is my IP” result, not a static assignment). Funcom’s directory stores that literal IPv4; it does not take a hostname or DDNS name. If the ISP later changes the address, set `"auto"` again and re-run. `LanIp` stays the private address the router forwards **to**.
+**Finding `AdvertiseIp`:** LAN-only — leave it empty. Funcom then lists `LanIp`. Internet is optional: set `AdvertiseIp = "auto"` so the installer looks up the current public IPv4 (a “what is my IP” result, not a static assignment). That address is written in **two** places: Funcom’s directory (`HOST_DATACENTER_IP_ADDRESS`) and Unreal `-ExternalAddress`. The game still **binds** `LanIp`. Funcom’s directory stores a literal IPv4; it does not take a hostname or DDNS name. If the ISP later changes the address, set `"auto"` again and re-run, or let `Restart-DuneBattlegroup.ps1` refresh it. `LanIp` stays the private address the router forwards **to**.
+
+Do **not** set k3s `node-external-ip` to the WAN address on WSL. Funcom’s Alpine VM can; WSL’s k3s agent then dials `WAN:6443` and the cluster wedges. This installer never does that.
 
 Do not upload or share `dune-install.config.ps1`. It can hold the Funcom token. The example file in this repo is only a template.
 
@@ -113,12 +115,16 @@ LAN-only: skip this. Internet: on the router, forward to the host’s **`LanIp`*
 
 | Protocol | Ports | Why |
 | --- | --- | --- |
-| UDP | `7777–7810` | Game |
-| UDP | `7888–7941` | IGW (server-to-server / related) |
-| TCP | `31982` | Join (AMQP) |
-| TCP | `31519` | Director |
+| UDP | `7777–7810` | Game (Funcom official) |
+| UDP | `7888–7941` | IGW (this WSL stack; Funcom’s Hyper-V VM does not list these) |
+| TCP | `31982` | Join / AMQP (Funcom official) |
+| TCP | `31519` | Director (this WSL stack; Funcom’s Hyper-V VM does not list this) |
 
-Set `AdvertiseIp = "auto"` (or paste the current public IPv4), then re-run the installer so Funcom lists that address. It does **not** need to be a static IP from the ISP. If the WAN address changes later, run `"auto"` again.
+Funcom’s own docs only mention UDP `7777–7810` and TCP `31982`. Keep those. This WSL install also binds director `31519` and IGW UDP `7888+`; internet clients time out if those are missing.
+
+Set `AdvertiseIp = "auto"` (or paste the current public IPv4), then re-run the installer so **both** Funcom’s listing **and** Unreal `-ExternalAddress` use that address. Bind stays `LanIp`. It does **not** need to be a static IP from the ISP. If the WAN address changes later, run `"auto"` again, or run `Restart-DuneBattlegroup.ps1` (public mode re-looks up ipify).
+
+A listing you can see with **connection timed out** usually means the phone book is public but the game process is still telling clients to UDP to `LanIp`. `Get-DuneStatus.ps1` should show `running_ExternalAddress` equal to the public IPv4, and `running_MultiHome` equal to `LanIp`.
 
 Do **not** port-forward TCP `18888` (Funcom file browser) unless you intend to expose that admin UI to the internet.
 
@@ -181,6 +187,7 @@ Funcom’s file browser (TCP `18888`) often **denies writes** to those inis. The
 - **In queue / server offline after an update.** A depot roll restarts Hagga. The client can list the world while Survival is still `Startup` / `PostLandscapePhysics`, or while director `31519` is not listening. Run `Get-DuneStatus.ps1`. Join only when Overmap and Survival_1 are Running / true and Gateway is Ready (not Modifying). `Restart-DuneBattlegroup.ps1` now waits for that and retries the director bind.
 - **HP3 / pending connection / could not verify identity.** The Hagga process could not reach Funcom FLS DNS (`sb-retail.fls.funcom.com`). The installer applies a CoreDNS stub and sets game-pod DNS to `8.8.8.8` with `ndots:1`. Re-run `Install.bat` or `Restart-DuneBattlegroup.ps1`. Join only when Survival is Running / true.
 - **Client cannot see the world.** Experimental client (not live), same build as the server, firewall, another computer (not the host). For internet: `AdvertiseIp` must be `"auto"` or the current public IPv4, and the router must forward to `LanIp`. For LAN-only: leave `AdvertiseIp` empty.
+- **Connection timed out (world is listed).** Funcom’s directory is not the UDP path. The installer must set Unreal `-ExternalAddress` to the public IPv4 while `-MultiHome` stays `LanIp`. `Get-DuneStatus.ps1` shows both. Also forward UDP `7777–7810` **and** TCP `31982` to `LanIp`; this WSL stack also needs TCP `31519` and UDP `7888–7941`. Do not put the WAN IP on k3s as `node-external-ip`.
 - **WSL distro failed to start.** Often RAM (`WslMemory` too high for the host) or virtualization off.
 
 This installer is meant for a from-scratch Windows 11 Home machine. It will skip world create if a Funcom battlegroup namespace already exists in that Ubuntu.

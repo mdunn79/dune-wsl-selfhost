@@ -96,6 +96,7 @@ lf "$SETUP_SRC/apply-k8s-hosts.sh" /home/dune/.dune/bin/apply-k8s-hosts.sh
 lf "$SETUP_SRC/dune-ensure-join.sh" /home/dune/.dune/bin/dune-ensure-join.sh
 lf "$SETUP_SRC/dune-maintain.sh" /home/dune/.dune/bin/dune-maintain.sh
 lf "$SETUP_SRC/dune-fix-fls-dns.sh" /home/dune/.dune/bin/dune-fix-fls-dns.sh
+lf "$SETUP_SRC/dune-set-advertise-ip.sh" /home/dune/.dune/bin/dune-set-advertise-ip.sh
 if [ -f "$SETUP_SRC/coredns-custom.yaml" ]; then
   sed 's/\r$//' "$SETUP_SRC/coredns-custom.yaml" > /home/dune/.dune/bin/coredns-custom.yaml
 fi
@@ -109,6 +110,9 @@ echo "=== patch Funcom Alpine/OpenRC scripts for systemd ==="
 )
 
 echo "=== k3s ==="
+# Do not put the WAN/public IPv4 in k3s as node-external-ip. Funcom's Alpine VM
+# can; WSL's agent then reconnects to WAN:6443, which is not listening, and the
+# cluster wedges. Unreal ExternalAddress is set by dune-set-advertise-ip.sh.
 sudo mkdir -p /etc/rancher/k3s/config.yaml.d
 K3S_CFG=/etc/rancher/k3s/config.yaml
 desired="$(sed 's/\r$//' "$SETUP_SRC/99-dune.yaml")"
@@ -223,24 +227,6 @@ PY
   printf '%s\n' "$WORLD_NAME" "$REGION_INDEX" "$TOKEN" | sudo -u dune -H bash "$SCRIPTS/setup/world.sh"
 fi
 
-echo "=== HOST_DATACENTER_IP_ADDRESS=$ADVERTISE_IP (bind $LAN_IP) ==="
-python3 - <<PY
-from pathlib import Path
-import re
-ip = "$ADVERTISE_IP"
-pat = re.compile(r"(name:\s*HOST_DATACENTER_IP_ADDRESS\s*\n\s*value:\s*)(\S+)")
-for path in Path("/home/dune/.dune").glob("sh-*.yaml"):
-    if path.name.endswith("-fls-secret.yaml") or path.name.endswith("-rmq-secret.yaml"):
-        continue
-    text = path.read_text()
-    updated, n = pat.subn(r"\g<1>" + ip, text)
-    if n == 0:
-        updated = text.replace("value: 127.0.0.1", f"value: {ip}")
-    if updated != text:
-        path.write_text(updated)
-        print(f"patched {path}")
-PY
-
 NS="$(sudo kubectl get ns --no-headers -o custom-columns=NAME:.metadata.name | grep '^funcom-seabass-' | head -n1 || true)"
 if [ -z "$NS" ]; then
   echo "ERROR: world namespace was not created" >&2
@@ -250,37 +236,15 @@ fi
 BG="${NS#funcom-seabass-}"
 echo "Namespace=$NS BattleGroup=$BG"
 
-PATCH="$(
-  sudo kubectl get battlegroup "$BG" -n "$NS" -o json \
-    | DUNE_ADVERTISE_IP="$ADVERTISE_IP" python3 -c 'import json,os,sys
-bg=json.load(sys.stdin)
-player_ip=os.environ["DUNE_ADVERTISE_IP"]
-ops=[]
-def esc(part):
-    return str(part).replace("~","~0").replace("/","~1")
-def walk(node,path):
-    if isinstance(node,dict):
-        envs=node.get("envVars")
-        if isinstance(envs,list):
-            for i,item in enumerate(envs):
-                if isinstance(item,dict) and item.get("name")=="HOST_DATACENTER_IP_ADDRESS":
-                    if item.get("value")==player_ip:
-                        continue
-                    ops.append({"op":"replace" if "value" in item else "add","path":"/"+"/".join(esc(p) for p in path+["envVars",i,"value"]),"value":player_ip})
-        for key,value in node.items():
-            walk(value,path+[key])
-    elif isinstance(node,list):
-        for i,value in enumerate(node):
-            walk(value,path+[i])
-walk(bg.get("spec",{}),["spec"])
-print(json.dumps(ops))'
+echo "=== advertise $ADVERTISE_IP (Funcom listing + Unreal ExternalAddress; bind stays $LAN_IP) ==="
+# WSL k3s must not get node-external-ip=<WAN>: the agent then dials WAN:6443 and fails NAT.
+ADV_OUT="$(
+  DUNE_LAN_IP="$LAN_IP" DUNE_ADVERTISE_IP="$ADVERTISE_IP" \
+    /home/dune/.dune/bin/dune-set-advertise-ip.sh "$ADVERTISE_IP"
 )"
-if [ "$PATCH" != "[]" ]; then
-  sudo kubectl patch battlegroup "$BG" -n "$NS" --type=json -p "$PATCH"
-  echo "patched live BattleGroup IP"
-else
-  echo "BattleGroup advertise IP already $ADVERTISE_IP; skipping patch"
-fi
+echo "$ADV_OUT"
+ADV_CHANGED=0
+echo "$ADV_OUT" | grep -q 'changed=yes' && ADV_CHANGED=1
 
 maps_joinable() {
   local st="$1"
@@ -339,7 +303,7 @@ chmod_filebrowser_usersettings() {
   echo "File Browser UserSettings made writable (UI often denies otherwise)"
 }
 
-if [ "$WORLD_EXISTS" -eq 1 ] && maps_ready; then
+if [ "$WORLD_EXISTS" -eq 1 ] && [ "$ADV_CHANGED" -eq 0 ] && maps_ready; then
   echo "Maps already Ready; skipping image apply, usersettings, and map wait"
 else
   if [ "$WORLD_EXISTS" -eq 0 ]; then

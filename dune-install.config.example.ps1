@@ -8,6 +8,8 @@
     LanIp       = ""
     # Empty = LAN-only (Funcom lists LanIp). "auto" = look up the current public IPv4
     # at install time for internet players. Need not be a static ISP address.
+    # That address is written to Funcom's listing AND Unreal -ExternalAddress.
+    # The server still binds LanIp. Do not put the WAN IP on k3s as node-external-ip.
     AdvertiseIp = ""
     # CasualPve = NoPVP + faster/easier progression (bundled inis)
     # Official  = Funcom depot defaults (PvP/security zones as shipped)
