@@ -452,5 +452,16 @@ finally {
 }
 
 Write-Log "Join as $($cfg.WorldName) at $advertiseIp (bound on $($cfg.LanIp)). Do not join from the host."
+$clientCfg = Join-Path $SetupRoot "lan-redirect\dune-client.config.ps1"
+$clientDir = Join-Path $SetupRoot "lan-redirect"
+if (Test-Path $clientDir) {
+    @"
+@{
+    LanIp    = "$($cfg.LanIp)"
+    PublicIp = "auto"
+}
+"@ | Set-Content -Path $clientCfg -Encoding ASCII
+    Write-Log "Wrote $clientCfg for house PCs (copy the lan-redirect folder; run Install-DuneLanRedirect.ps1 there)."
+}
 Write-Log "Daily maintain: Restart-DuneBattlegroup.ps1 (queries Steam; rolls maps only if a newer depot is waiting)."
 Write-Log "=== Install-DuneBattlegroup end ==="

@@ -4,6 +4,8 @@ Runs Funcom’s **Linux** battlegroup inside WSL2. It does **not** use Funcom’
 
 **The host** is the Windows 11 PC where you run this installer — your machine, not anyone else’s. Players can join from the LAN or from the internet if you port-forward. Do **not** join the world from the host itself (WSL mirrored networking does not hairpin).
 
+If the listing uses your **public** IPv4 (`AdvertiseIp = "auto"`), Funcom has no connect-by-IP. A second PC in the house is still sent to the WAN address and back in through the router. That path often rubberbands even when the world is healthy and internet friends are fine. Copy the `lan-redirect` folder to those house PCs; see [House PCs when the listing is public](#house-pcs-when-the-listing-is-public).
+
 The scripts in this folder are MIT. The game files SteamCMD downloads are Funcom’s; this pack does not redistribute them.
 
 ## What you need
@@ -54,7 +56,7 @@ Fill in at least these:
 | `WorldName` | The name players see in the self-host list. No `'` or `\|`. Example: `"My Sietch"`. |
 | `Region` | Exactly one of: `Asia`, `Europe`, `North America`, `Oceania`, `South America`. This is Funcom’s region menu, not Windows locale. |
 | `LanIp` | Leave `""` unless auto-detect is wrong. The installer picks Ethernet, then Wi-Fi. Not `127.0.0.1`. |
-| `AdvertiseIp` | Leave `""` for LAN-only (typical). Funcom does **not** need a static ISP address. Internet: `"auto"` looks up the **current** public IPv4 at install time. |
+| `AdvertiseIp` | Leave `""` for LAN-only (typical). Funcom does **not** need a static ISP address. Internet: `"auto"` looks up the **current** public IPv4 at install time. House PCs on that public listing need `lan-redirect` ([below](#house-pcs-when-the-listing-is-public)). |
 | `PlayStyle` | `CasualPve` or `Official`. See [Play styles](#play-styles). |
 | `FlsToken` | Your Funcom token in quotes, or `""` to be prompted. |
 
@@ -69,7 +71,7 @@ Optional, but worth checking:
 
 **Finding `LanIp` if you must set it:** on the host, in PowerShell, run `ipconfig`. Use the IPv4 of Ethernet or Wi-Fi (often `192.168.x.x` or `10.x.x.x`). Skip `127.0.0.1` and VPN/virtual adapters. The installer refuses an address that is not assigned to the host.
 
-**Finding `AdvertiseIp`:** LAN-only — leave it empty. Funcom then lists `LanIp`. Internet is optional: set `AdvertiseIp = "auto"` so the installer looks up the current public IPv4 (a “what is my IP” result, not a static assignment). That address is written in **two** places: Funcom’s directory (`HOST_DATACENTER_IP_ADDRESS`) and Unreal `-ExternalAddress`. The game still **binds** `LanIp`. Funcom’s directory stores a literal IPv4; it does not take a hostname or DDNS name. If the ISP later changes the address, set `"auto"` again and re-run, or let `Restart-DuneBattlegroup.ps1` refresh it. `LanIp` stays the private address the router forwards **to**.
+**Finding `AdvertiseIp`:** LAN-only — leave it empty. Funcom then lists `LanIp`, and house PCs join that address directly. Internet is optional: set `AdvertiseIp = "auto"` so the installer looks up the current public IPv4 (a “what is my IP” result, not a static assignment). That address is written in **two** places: Funcom’s directory (`HOST_DATACENTER_IP_ADDRESS`) and Unreal `-ExternalAddress`. The game still **binds** `LanIp`. Funcom’s directory stores a literal IPv4; it does not take a hostname or DDNS name. There is also no LAN/WAN split: every client, including a PC in the same house, is told that one address. If the ISP later changes the address, set `"auto"` again and re-run, or let `Restart-DuneBattlegroup.ps1` refresh it. `LanIp` stays the private address the router forwards **to**.
 
 Do **not** set k3s `node-external-ip` to the WAN address on WSL. Funcom’s Alpine VM can; WSL’s k3s agent then dials `WAN:6443` and the cluster wedges. This installer never does that.
 
@@ -128,9 +130,9 @@ A listing you can see with **connection timed out** usually means the phone book
 
 Do **not** port-forward TCP `18888` (Funcom file browser) unless you intend to expose that admin UI to the internet.
 
-If the ISP uses CGNAT (no real public IPv4 at all), forwarding will not reach the host. LAN play still works.
+If the ISP uses CGNAT (no real public IPv4 at all), forwarding will not reach the host. LAN play still works (`AdvertiseIp` empty).
 
-People on the same LAN, when `AdvertiseIp` is the WAN IP, usually join through the public listing. That needs NAT loopback on the router; many home routers have it. They still must not join from the host.
+House PCs plus internet friends: keep `AdvertiseIp` public, then install `lan-redirect` on each house gaming PC ([House PCs](#house-pcs-when-the-listing-is-public)). Do not run that helper on the host.
 
 ## 7. Join from another computer
 
@@ -141,11 +143,31 @@ People on the same LAN, when `AdvertiseIp` is the WAN IP, usually join through t
 
 **Do not join from the host.** Mirrored WSL networking does not hairpin reliably; the list can spin forever if you try.
 
+If you play from **another PC in the house** and the listing is your public IP, install `lan-redirect` on that PC first ([section 8](#house-pcs-when-the-listing-is-public)). Otherwise the client hairpins through the router and often rubberbands.
+
 If the tab spins after you click the world, Hagga is usually still starting. On the host, run `Get-DuneStatus.ps1`. Join only when **Survival_1** is `Running` / `true`, not `PostLandscapePhysics`, and not while Gateway is `Modifying`. That can take several minutes after the installer finishes, and again after a depot update.
 
 **In queue and the world also shows offline.** The listing is still in Funcom’s directory, but Survival is not Ready yet or director TCP `31519` is not bound. Wait until `Get-DuneStatus.ps1` shows both maps Running / true and `31519` listening. Join only from another computer.
 
-## 8. Keep it running and patched
+## 8. House PCs when the listing is public
+
+Funcom’s Experimental list has **one** IPv4. There is no “connect by IP” box. If that IPv4 is your WAN address, a PC in the same house still sends UDP/TCP to the public IP and the router has to hairpin it back to `LanIp`. Hagga then logs the client as your WAN address. Unreal rejects late `ServerMove` packets (about a second old), which feels like rubberbanding. The world can be healthy, CPU idle, and internet players fine.
+
+ARK / Valheim / 7DTD often survive that hairpin on the same router because they listen more loosely. This stack is Unreal inside WSL2, and Funcom will not take a LAN address *and* a public one.
+
+**Fix (gaming PC only, not the host):** copy the `lan-redirect` folder. The host installer writes `lan-redirect\dune-client.config.ps1` with `LanIp` for you. On the house PC:
+
+1. Copy `dune-client.config.example.ps1` to `dune-client.config.ps1` if that file is missing, and set `LanIp` to the host Ethernet/Wi-Fi IPv4.
+2. Elevated PowerShell in that folder:
+   - One-off, window stays open: `Start-DuneLanRedirect.bat`
+   - Hibernate until Dune is running: `Start-DuneLanRedirect.bat watch`
+   - Daily, quiet: `Install-DuneLanRedirect.ps1` (logon task). `Install-DuneLanRedirect.ps1 -Service` if the person who plays is not a daily Administrator.
+3. If you were already in the world, leave to the server list, then join again after the redirector is up (or after `-WatchDune` has armed).
+4. On the **host**, `Get-DuneNetHealth.ps1` (optional `-WatchSeconds 60`). The house PC should show RemoteAddr as `lan` (`192.168.x`), not `hairpin-or-self-wan`. `timestamp_expired_count` in the last 2 minutes should stay near 0 while you move.
+
+Uninstall with `Uninstall-DuneLanRedirect.ps1`. Details, ports, and WinDivert notes: `lan-redirect/README.md`. Needs 64-bit PowerShell as Administrator on the gaming PC. Do not install it on the Dune host.
+
+## 9. Keep it running and patched
 
 From PowerShell in this folder on the host (does not take the world down if Steam has no new depot):
 
@@ -163,6 +185,12 @@ To see if the world is joinable without rolling maps:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Get-DuneStatus.ps1"
+```
+
+To see whether a house client is hairpinning or rubberbanding (`ServerMove TimeStamp expired`):
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Get-DuneNetHealth.ps1"
 ```
 
 If the host has more than one WSL distro, keep `Distro = "Ubuntu"` in the config (the installer sets that distro as default).
@@ -190,10 +218,11 @@ Funcom’s file browser (TCP `18888`) often **denies writes** to those inis. The
 - **HP3 / pending connection / could not verify identity.** The Hagga process could not reach Funcom FLS DNS (`sb-retail.fls.funcom.com`). The installer applies a CoreDNS stub and sets game-pod DNS to `8.8.8.8` with `ndots:1`. Re-run `Install.bat` or `Restart-DuneBattlegroup.ps1`. Join only when Survival is Running / true.
 - **Client cannot see the world.** Experimental client (not live), same build as the server, firewall, another computer (not the host). For internet: `AdvertiseIp` must be `"auto"` or the current public IPv4, and the router must forward to `LanIp`. For LAN-only: leave `AdvertiseIp` empty.
 - **Connection timed out (world is listed).** Funcom’s directory is not the UDP path. The installer must set Unreal `-ExternalAddress` to the public IPv4 while `-MultiHome` stays `LanIp`. `Get-DuneStatus.ps1` shows both. Also forward UDP `7777–7810` **and** TCP `31982` to `LanIp`; this WSL stack also needs TCP `31519` and UDP `7888–7941`. Do not put the WAN IP on k3s as `node-external-ip`.
+- **Rubberbanding on a house PC while internet friends are fine.** The listing is the WAN IP, so the LAN client hairpins through the router. `Get-DuneNetHealth.ps1` shows RemoteAddr equal to your public IPv4 and `TimeStamp expired` while you move. Install `lan-redirect` on that gaming PC ([House PCs](#house-pcs-when-the-listing-is-public)). This is not the same as joining from the host.
+- **Rubberbanding / hitching for everyone (including internet players).** Windows WSL default `autoMemoryReclaim` (gradual/dropCache) can reclaim Hagga’s pages while the process is running. The installer and `Restart-DuneBattlegroup.ps1` set `autoMemoryReclaim=disabled` in `%USERPROFILE%\.wslconfig`. That key is VM-wide: it applies on the next `wsl --shutdown` (or the first start after the file is written). Re-runs do not shut WSL down when the key is already `disabled`. Do not set `pageReporting` — current WSL rejects it. `Get-DuneStatus.ps1` warns if reclaim is not disabled.
 - **WSL distro failed to start.** Often RAM (`WslMemory` too high for the host) or virtualization off.
 - **`wsl.exe` Catastrophic failure / `E_UNEXPECTED` while Ubuntu still shows Running.** The WSL control plane wedged; SSH/k3s can still be up. Run `Restart-DuneBattlegroup.ps1`. It terminates the distro, and only `wsl --shutdown`s if exec is still dead.
 - **World Stopped after a Windows/WSL reboot.** k3s flannel (`/run/flannel/subnet.env`) is missing and/or Funcom `spec.stop` stayed true (`battlegroup start` can no-op). `Restart-DuneBattlegroup.ps1` restores both, then waits until Survival is Running / true.
-- **Rubberbanding / hitching for everyone (including players on another PC).** This is not NAT loopback. Windows WSL default `autoMemoryReclaim` (gradual/dropCache) can reclaim Hagga’s pages while the process is running; every client hitchs. The installer and `Restart-DuneBattlegroup.ps1` set `autoMemoryReclaim=disabled` in `%USERPROFILE%\.wslconfig`. That key is VM-wide: it applies on the next `wsl --shutdown` (or the first start after the file is written). Re-runs do not shut WSL down when the key is already `disabled`. Do not set `pageReporting` — current WSL rejects it. `Get-DuneStatus.ps1` warns if reclaim is not disabled.
 
 This installer is meant for a from-scratch Windows 11 Home machine. It will skip world create if a Funcom battlegroup namespace already exists in that Ubuntu. Re-run it anyway to refresh helpers, advertise IP, FLS DNS, join ports, and `.wslconfig` repairs; it stays a no-op for pieces that are already correct.
 
