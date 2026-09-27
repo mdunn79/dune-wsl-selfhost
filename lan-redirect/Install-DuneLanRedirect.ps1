@@ -12,7 +12,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$here = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($here)) {
+    $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
 $taskName = "DuneLanRedirect"
 $svcId = "DuneLanRedirect"
 $cfgPath = Join-Path $here "dune-client.config.ps1"

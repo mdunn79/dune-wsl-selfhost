@@ -18,10 +18,17 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$here = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($here)) {
+    $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+if ([string]::IsNullOrWhiteSpace($here)) {
+    $here = Split-Path -Parent $PSCommandPath
+}
 $cs = Join-Path $here "DuneLanRedirect.cs"
 $wdDir = Join-Path $here "windivert"
 $cfgPath = Join-Path $here "dune-client.config.ps1"
+$example = Join-Path $here "dune-client.config.example.ps1"
 $logDir = Join-Path $env:LOCALAPPDATA "DuneLanRedirect"
 $logFile = Join-Path $logDir "redirect.log"
 $duneNames = @(
@@ -75,15 +82,50 @@ function Install-WinDivert {
 if (-not (Test-Path $cs)) { throw "Missing $cs" }
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
-if (Test-Path $cfgPath) {
-    $cfg = Get-Content -Raw $cfgPath | Invoke-Expression
+function Read-ClientConfig([string]$Path) {
+    $raw = [System.IO.File]::ReadAllText($Path)
+    $cfg = $null
+    try { $cfg = Invoke-Expression $raw } catch { $cfg = $null }
+    $lan = ""
+    $pub = ""
+    $names = $null
+    if ($cfg -is [System.Collections.IDictionary]) {
+        if ($cfg["LanIp"]) { $lan = [string]$cfg["LanIp"] }
+        if ($cfg["PublicIp"]) { $pub = [string]$cfg["PublicIp"] }
+        if ($cfg["DuneProcessNames"]) { $names = @($cfg["DuneProcessNames"]) }
+    } elseif ($null -ne $cfg) {
+        if ($cfg.LanIp) { $lan = [string]$cfg.LanIp }
+        if ($cfg.PublicIp) { $pub = [string]$cfg.PublicIp }
+        if ($cfg.DuneProcessNames) { $names = @($cfg.DuneProcessNames) }
+    }
+    if ([string]::IsNullOrWhiteSpace($lan) -and $raw -match '(?im)^\s*LanIp\s*=\s*["'']?(\d{1,3}(?:\.\d{1,3}){3})') {
+        $lan = $Matches[1]
+    }
+    if ([string]::IsNullOrWhiteSpace($pub) -and $raw -match '(?im)^\s*PublicIp\s*=\s*["'']([^"'']+)["'']') {
+        $pub = $Matches[1]
+    }
+    return @{ LanIp = $lan; PublicIp = $pub; DuneProcessNames = $names }
+}
+
+if (-not (Test-Path -LiteralPath $cfgPath) -and (Test-Path -LiteralPath $example)) {
+    Copy-Item -LiteralPath $example -Destination $cfgPath
+}
+
+if (Test-Path -LiteralPath $cfgPath) {
+    $cfg = Read-ClientConfig $cfgPath
     if ([string]::IsNullOrWhiteSpace($LanIp) -and $cfg.LanIp) { $LanIp = [string]$cfg.LanIp }
     if ([string]::IsNullOrWhiteSpace($PublicIp) -and $cfg.PublicIp) { $PublicIp = [string]$cfg.PublicIp }
     if ($cfg.DuneProcessNames) { $duneNames = @($cfg.DuneProcessNames) }
 }
 
 if ([string]::IsNullOrWhiteSpace($LanIp)) {
-    throw "Set LanIp in dune-client.config.ps1 (copy the example) or pass -LanIp. Use the Dune host Ethernet/Wi-Fi IPv4."
+    $hint = "Looked for $cfgPath"
+    if (Test-Path -LiteralPath $cfgPath) {
+        $hint = "Loaded $cfgPath but LanIp is empty. Set LanIp to the Dune host Ethernet/Wi-Fi IPv4 (example: 192.168.1.101)."
+    } elseif (Test-Path -LiteralPath $example) {
+        $hint = "Copy $example to $cfgPath and set LanIp."
+    }
+    throw "$hint Or pass -LanIp from the command line."
 }
 $LanIp = $LanIp.Trim()
 if (-not (Test-Ipv4 $LanIp)) { throw "LanIp must be dotted IPv4" }
