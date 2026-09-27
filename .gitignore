@@ -1,0 +1,11 @@
+dune-install.config.ps1
+.fls-token
+install.env
+*.log
+lan-redirect/windivert/
+lan-redirect/WinDivert-*.zip
+lan-redirect/windivert-extract/
+lan-redirect/dune-client.config.ps1
+lan-redirect/logs/
+lan-redirect/DuneLanRedirect.exe
+lan-redirect/DuneLanRedirect.xml
