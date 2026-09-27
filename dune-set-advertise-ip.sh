@@ -15,6 +15,10 @@ lan_ip() {
     printf '%s\n' "$DUNE_LAN_IP"
     return
   fi
+  if [ -s /home/dune/.dune/lan-ip.conf ]; then
+    tr -d '[:space:]' < /home/dune/.dune/lan-ip.conf
+    return
+  fi
   ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1
 }
 
@@ -137,7 +141,8 @@ fi
 mkdir -p /home/dune/.dune
 printf '%s\n' "$CHOICE" > /home/dune/.dune/battlegroup-ip.conf
 printf '\n\n\n%s\n' "$ARG" > /home/dune/.dune/settings.conf
-chown dune:dune /home/dune/.dune/battlegroup-ip.conf /home/dune/.dune/settings.conf 2>/dev/null || true
+printf '%s\n' "$LAN" > /home/dune/.dune/lan-ip.conf
+chown dune:dune /home/dune/.dune/battlegroup-ip.conf /home/dune/.dune/settings.conf /home/dune/.dune/lan-ip.conf 2>/dev/null || true
 
 ns_and_bg || exit 1
 

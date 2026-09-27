@@ -97,6 +97,7 @@ lf "$SETUP_SRC/dune-ensure-join.sh" /home/dune/.dune/bin/dune-ensure-join.sh
 lf "$SETUP_SRC/dune-maintain.sh" /home/dune/.dune/bin/dune-maintain.sh
 lf "$SETUP_SRC/dune-fix-fls-dns.sh" /home/dune/.dune/bin/dune-fix-fls-dns.sh
 lf "$SETUP_SRC/dune-set-advertise-ip.sh" /home/dune/.dune/bin/dune-set-advertise-ip.sh
+lf "$SETUP_SRC/dune-ensure-runtime.sh" /home/dune/.dune/bin/dune-ensure-runtime.sh
 if [ -f "$SETUP_SRC/coredns-custom.yaml" ]; then
   sed 's/\r$//' "$SETUP_SRC/coredns-custom.yaml" > /home/dune/.dune/bin/coredns-custom.yaml
 fi
@@ -236,6 +237,12 @@ fi
 BG="${NS#funcom-seabass-}"
 echo "Namespace=$NS BattleGroup=$BG"
 
+printf '%s\n' "$LAN_IP" > /home/dune/.dune/lan-ip.conf
+chown dune:dune /home/dune/.dune/lan-ip.conf 2>/dev/null || true
+
+echo "=== runtime (k3s / flannel / spec.stop; no-op if already healthy) ==="
+as_dune /home/dune/.dune/bin/dune-ensure-runtime.sh || true
+
 echo "=== advertise $ADVERTISE_IP (Funcom listing + Unreal ExternalAddress; bind stays $LAN_IP) ==="
 # WSL k3s must not get node-external-ip=<WAN>: the agent then dials WAN:6443 and fails NAT.
 ADV_OUT="$(
@@ -248,7 +255,7 @@ echo "$ADV_OUT" | grep -q 'changed=yes' && ADV_CHANGED=1
 
 maps_joinable() {
   local st="$1"
-  echo "$st" | grep -qiE '[[:space:]](Modifying|Suspended)[[:space:]]' && return 1
+  echo "$st" | grep -qiE '[[:space:]](Modifying|Suspended|Stopped)[[:space:]]' && return 1
   echo "$st" | grep -qE 'Healthy' \
     && echo "$st" | grep -qE 'Overmap[[:space:]]+Running[[:space:]]+true' \
     && echo "$st" | grep -qE 'Survival_1[[:space:]]+Running[[:space:]]+true'

@@ -72,6 +72,14 @@ wait_k3s() {
   return 1
 }
 
+ensure_runtime() {
+  if [ -x /home/dune/.dune/bin/dune-ensure-runtime.sh ]; then
+    /home/dune/.dune/bin/dune-ensure-runtime.sh
+    return
+  fi
+  wait_k3s
+}
+
 operators_answer() {
   sudo kubectl get battlegroup -A >/dev/null 2>&1
 }
@@ -100,7 +108,7 @@ recover_operators_if_stale() {
 maps_ready() {
   local status
   status="$("$BG" status 2>/dev/null || true)"
-  echo "$status" | grep -qiE '[[:space:]](Modifying|Suspended)[[:space:]]' && return 1
+  echo "$status" | grep -qiE '[[:space:]](Modifying|Suspended|Stopped)[[:space:]]' && return 1
   echo "$status" | grep -qE 'Healthy' \
     && echo "$status" | grep -qE 'Overmap[[:space:]]+Running[[:space:]]+true' \
     && echo "$status" | grep -qE 'Survival_1[[:space:]]+Running[[:space:]]+true'
@@ -187,7 +195,7 @@ apply_depot_update() {
 
 echo "=== dune-maintain begin ==="
 
-wait_k3s
+ensure_runtime
 recover_operators_if_stale
 
 status="$("$BG" status 2>/dev/null || true)"

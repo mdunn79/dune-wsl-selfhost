@@ -9,9 +9,12 @@ fi
 BG="${NS#funcom-seabass-}"
 SVC="${BG}-mq-game-svc"
 BGD="${BG}-bgd-svc"
-LAN_IP="$(ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)"
+LAN_IP="${DUNE_LAN_IP:-}"
+if [ -z "$LAN_IP" ] && [ -s /home/dune/.dune/lan-ip.conf ]; then
+  LAN_IP="$(tr -d '[:space:]' < /home/dune/.dune/lan-ip.conf)"
+fi
 if [ -z "$LAN_IP" ]; then
-  LAN_IP="${DUNE_LAN_IP:-}"
+  LAN_IP="$(ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)"
 fi
 if [ -z "$LAN_IP" ]; then
   echo "ERROR: could not detect LAN IP; set DUNE_LAN_IP" >&2

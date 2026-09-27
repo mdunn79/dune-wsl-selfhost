@@ -10,6 +10,7 @@
     # at install time for internet players. Need not be a static ISP address.
     # That address is written to Funcom's listing AND Unreal -ExternalAddress.
     # The server still binds LanIp. Do not put the WAN IP on k3s as node-external-ip.
+    # RAM hitching: the installer/Restart scripts set autoMemoryReclaim=disabled in .wslconfig.
     AdvertiseIp = ""
     # CasualPve = NoPVP + faster/easier progression (bundled inis)
     # Official  = Funcom depot defaults (PvP/security zones as shipped)

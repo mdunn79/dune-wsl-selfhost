@@ -185,6 +185,16 @@ function Get-WslDistro([string]$Preferred) {
     return $ubuntu
 }
 
+function Test-WslDistroRunning([string]$Distro) {
+    $raw = & wsl.exe -l -v --utf8 2>$null
+    if (-not $raw) { return $false }
+    foreach ($line in @($raw)) {
+        $t = [string]$line
+        if ($t -match [regex]::Escape($Distro) -and $t -match 'Running') { return $true }
+    }
+    return $false
+}
+
 function Set-WslConfig($Cfg) {
     $path = Join-Path $env:USERPROFILE ".wslconfig"
     $desired = @"
@@ -198,34 +208,53 @@ firewall=true
 
 [experimental]
 hostAddressLoopback=true
+autoMemoryReclaim=disabled
 "@
     if (-not (Test-Path $path)) {
         Set-Content -Path $path -Value $desired -Encoding ASCII
-        Write-Log "Wrote $path (mirrored networking, $($Cfg.WslMemory))"
+        Write-Log "Wrote $path (mirrored networking, $($Cfg.WslMemory), autoMemoryReclaim=disabled)"
         return $true
     }
-    $cur = Get-Content -Raw $path
-    if ($cur -match "networkingMode\s*=\s*mirrored") {
-        Write-Log "Keeping existing .wslconfig (mirrored already set); not rewriting WSL settings"
-        return $false
+    $orig = (Get-Content -Raw $path).TrimEnd()
+    $text = $orig
+    # Removed from WSL; the key only prints "Unknown key" on startup.
+    $text = [regex]::Replace($text, "(?m)^\s*pageReporting\s*=.*\r?\n?", "")
+    if ($text -match "(?im)^\s*autoMemoryReclaim\s*=") {
+        if ($text -notmatch "(?im)^\s*autoMemoryReclaim\s*=\s*disabled\s*$") {
+            $text = [regex]::Replace($text, "(?im)^\s*autoMemoryReclaim\s*=.*$", "autoMemoryReclaim=disabled")
+            Write-Log "Forcing autoMemoryReclaim=disabled (gradual/dropCache lets Windows yank Hagga RAM)"
+        }
+    } elseif ($text -match "\[experimental\]") {
+        $text = [regex]::Replace($text, "\[experimental\]", "[experimental]`r`nautoMemoryReclaim=disabled", 1)
+        Write-Log "Adding autoMemoryReclaim=disabled under [experimental]"
+    } else {
+        $text += "`r`n`r`n[experimental]`r`nautoMemoryReclaim=disabled"
+        Write-Log "Adding [experimental] autoMemoryReclaim=disabled"
     }
-    Write-Log "Existing .wslconfig found; adding mirrored networking only (keeping memory/CPU settings)"
-    $text = $cur.TrimEnd()
-    if ($text -notmatch '\[wsl2\]') {
-        $text += "`r`n[wsl2]"
-    }
-    foreach ($pair in @("networkingMode=mirrored", "dnsTunneling=true", "firewall=true")) {
-        $key = ($pair -split "=", 2)[0]
-        if ($text -notmatch "$key\s*=") {
-            $text = [regex]::Replace($text, "\[wsl2\]", "[wsl2]`r`n$pair", 1)
+    if ($text -notmatch "(?im)^\s*networkingMode\s*=") {
+        Write-Log "Existing .wslconfig found; adding mirrored networking (keeping memory/CPU settings)"
+        if ($text -notmatch '\[wsl2\]') { $text += "`r`n[wsl2]" }
+        foreach ($pair in @("networkingMode=mirrored", "dnsTunneling=true", "firewall=true")) {
+            $key = ($pair -split "=", 2)[0]
+            if ($text -notmatch "(?im)^\s*$key\s*=") {
+                $text = [regex]::Replace($text, "\[wsl2\]", "[wsl2]`r`n$pair", 1)
+            }
         }
     }
-    if ($text -notmatch '\[experimental\]') {
-        $text += "`r`n`r`n[experimental]`r`nhostAddressLoopback=true"
-    } elseif ($text -notmatch "hostAddressLoopback\s*=") {
-        $text = [regex]::Replace($text, "\[experimental\]", "[experimental]`r`nhostAddressLoopback=true", 1)
+    if ($text -notmatch "(?im)^\s*hostAddressLoopback\s*=") {
+        if ($text -notmatch '\[experimental\]') {
+            $text += "`r`n`r`n[experimental]`r`nhostAddressLoopback=true"
+        } else {
+            $text = [regex]::Replace($text, "\[experimental\]", "[experimental]`r`nhostAddressLoopback=true", 1)
+        }
     }
-    Set-Content -Path $path -Value ($text.TrimEnd() + "`r`n") -Encoding ASCII
+    $text = $text.TrimEnd()
+    if ($text -eq $orig) {
+        Write-Log "Keeping existing .wslconfig (mirrored + autoMemoryReclaim=disabled already set)"
+        return $false
+    }
+    Set-Content -Path $path -Value ($text + "`r`n") -Encoding ASCII
+    Write-Log "Updated $path (WSL VM settings). wsl --shutdown is required for .wslconfig to take effect."
     return $true
 }
 
@@ -335,6 +364,13 @@ try {
 }
 
 $wslConfigChanged = Set-WslConfig $cfg
+$wasRunning = Test-WslDistroRunning $distro
+if ($wslConfigChanged -and $wasRunning) {
+    Write-Log "Applying .wslconfig with wsl --shutdown (terminate does not reload VM keys). One-time; skipped when the file is already correct."
+    & wsl.exe --shutdown
+    Start-Sleep -Seconds 5
+}
+
 & wsl.exe -d $distro -u root -- true
 if ($LASTEXITCODE -ne 0) {
     throw "WSL distro $distro failed to start."
@@ -346,11 +382,7 @@ if ($systemdOut -match "systemd") {
 } else {
     Write-Log "Enabling systemd in /etc/wsl.conf"
     & wsl.exe -d $distro -u root -- bash -lc "grep -q systemd=true /etc/wsl.conf 2>/dev/null || printf '\n[boot]\nsystemd=true\n' >> /etc/wsl.conf"
-    $wslConfigChanged = $true
-}
-
-if ($wslConfigChanged) {
-    Write-Log "Restarting the WSL distro only (not Windows) so .wslconfig/systemd apply"
+    Write-Log "Restarting distro $distro only (not Windows) so systemd applies"
     & wsl.exe --terminate $distro
     Start-Sleep -Seconds 2
     & wsl.exe -d $distro -u root -- true

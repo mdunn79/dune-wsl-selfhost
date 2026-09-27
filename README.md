@@ -80,9 +80,9 @@ Do not upload or share `dune-install.config.ps1`. It can hold the Funcom token. 
 1. Right-click **`Install.bat`** → **Run as administrator**. (Double-click also works; it will prompt for elevation.) A normal non-admin window will fail.
 2. Leave the window open. The first run can take a long time.
 
-The script, in order: enables Windows WSL features **if they are not already on**, installs Ubuntu **if the host has none**, writes `.wslconfig` only when mirrored networking is missing, turns on systemd if needed, opens the WSL Hyper-V firewall if needed, downloads Funcom’s Linux depot with SteamCMD if it is not already there, starts k3s, creates the world, then waits until Overmap **and** Survival stay Ready (up to about 20 minutes on that last wait). Survival often SIGSEGVs once on first boot and comes back; the installer waits through that.
+The script, in order: enables Windows WSL features **if they are not already on**, installs Ubuntu **if the host has none**, writes or repairs `.wslconfig` only when a required key is missing or wrong (`networkingMode=mirrored`, `autoMemoryReclaim=disabled`; a VM restart happens only then), turns on systemd if needed, opens the WSL Hyper-V firewall if needed, downloads Funcom’s Linux depot with SteamCMD if it is not already there, starts k3s, creates the world, then waits until Overmap **and** Survival stay Ready (up to about 20 minutes on that last wait). Survival often SIGSEGVs once on first boot and comes back; the installer waits through that.
 
-Re-running is safe. Already-installed WSL, Ubuntu, packages, SteamCMD, the depot, k3s, operators, and an existing world are skipped. It will not wipe operators or recreate the world. If maps are already Ready, it only refreshes join ports.
+Re-running is safe on a world that is already up. Already-installed WSL, Ubuntu, packages, SteamCMD, the depot, k3s, operators, and an existing world are skipped. Helper scripts in `/home/dune/.dune/bin` are refreshed from this folder. It will not wipe operators or recreate the world. If maps are already Ready and the advertise IP did not change, it only repairs runtime (flannel / `spec.stop` / join ports) and does **not** roll Hagga. `.wslconfig` is left alone when it already has mirrored networking and `autoMemoryReclaim=disabled`, so a healthy re-run does **not** `wsl --shutdown`.
 
 **If it tells you to reboot:** Windows needed a restart to finish enabling WSL. Reboot, then run `Install.bat` as administrator again. Do not install WSL yourself. Your `dune-install.config.ps1` is already there.
 
@@ -155,7 +155,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Restart-DuneBattlegro
 
 It queries Steam for app `4754530`, then updates and rolls maps **only** if a newer public build is waiting or the world is not Ready. After a real patch it waits until Gateway is Healthy and both maps stay Running / true (old pods still showing Running during Modifying are ignored), then binds join TCP `31982` / `31519`. A no-op is about 1–2 minutes. A real patch can take around 45 minutes. Output goes to `restart-dune-battlegroup.log`.
 
-Optional: Task Scheduler → At log on → run `Restart-DuneBattlegroup.ps1` with **Start in** set to this folder.
+Each run also copies the helper scripts from this folder into WSL (so a newer ZIP takes effect without a full reinstall), restores flannel/`spec.stop` if a Windows reboot left the world Stopped, and forces `autoMemoryReclaim=disabled` in `.wslconfig` if it was missing or set to gradual/dropCache. That last repair is the only case that `wsl --shutdown`s on a scheduled run; once the file is correct, daily runs do not bounce WSL.
+
+Optional: Task Scheduler → At log on → run `Restart-DuneBattlegroup.ps1` with **Start in** set to this folder. After a host reboot, that is what brings k3s, Hagga, and join ports back without downloading the depot again.
 
 To see if the world is joinable without rolling maps:
 
@@ -189,8 +191,11 @@ Funcom’s file browser (TCP `18888`) often **denies writes** to those inis. The
 - **Client cannot see the world.** Experimental client (not live), same build as the server, firewall, another computer (not the host). For internet: `AdvertiseIp` must be `"auto"` or the current public IPv4, and the router must forward to `LanIp`. For LAN-only: leave `AdvertiseIp` empty.
 - **Connection timed out (world is listed).** Funcom’s directory is not the UDP path. The installer must set Unreal `-ExternalAddress` to the public IPv4 while `-MultiHome` stays `LanIp`. `Get-DuneStatus.ps1` shows both. Also forward UDP `7777–7810` **and** TCP `31982` to `LanIp`; this WSL stack also needs TCP `31519` and UDP `7888–7941`. Do not put the WAN IP on k3s as `node-external-ip`.
 - **WSL distro failed to start.** Often RAM (`WslMemory` too high for the host) or virtualization off.
+- **`wsl.exe` Catastrophic failure / `E_UNEXPECTED` while Ubuntu still shows Running.** The WSL control plane wedged; SSH/k3s can still be up. Run `Restart-DuneBattlegroup.ps1`. It terminates the distro, and only `wsl --shutdown`s if exec is still dead.
+- **World Stopped after a Windows/WSL reboot.** k3s flannel (`/run/flannel/subnet.env`) is missing and/or Funcom `spec.stop` stayed true (`battlegroup start` can no-op). `Restart-DuneBattlegroup.ps1` restores both, then waits until Survival is Running / true.
+- **Rubberbanding / hitching for everyone (including players on another PC).** This is not NAT loopback. Windows WSL default `autoMemoryReclaim` (gradual/dropCache) can reclaim Hagga’s pages while the process is running; every client hitchs. The installer and `Restart-DuneBattlegroup.ps1` set `autoMemoryReclaim=disabled` in `%USERPROFILE%\.wslconfig`. That key is VM-wide: it applies on the next `wsl --shutdown` (or the first start after the file is written). Re-runs do not shut WSL down when the key is already `disabled`. Do not set `pageReporting` — current WSL rejects it. `Get-DuneStatus.ps1` warns if reclaim is not disabled.
 
-This installer is meant for a from-scratch Windows 11 Home machine. It will skip world create if a Funcom battlegroup namespace already exists in that Ubuntu.
+This installer is meant for a from-scratch Windows 11 Home machine. It will skip world create if a Funcom battlegroup namespace already exists in that Ubuntu. Re-run it anyway to refresh helpers, advertise IP, FLS DNS, join ports, and `.wslconfig` repairs; it stays a no-op for pieces that are already correct.
 
 ## License
 
