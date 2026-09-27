@@ -175,17 +175,23 @@ function Test-DuneClientRunning {
     return $false
 }
 
+function Stop-WinDivertDriver {
+    foreach ($name in @("WinDivert", "WinDivert64")) {
+        sc.exe stop $name 1>$null 2>$null
+    }
+}
+
 function Invoke-RedirectOnce {
     [DuneLanRedirect]::Running = $true
     return [DuneLanRedirect]::Run($wdDir, $PublicIp, $LanIp, $verboseN, $true)
 }
 
+$code = 0
 try {
     if (-not $WatchDune) {
         $code = Invoke-RedirectOnce
         Write-RedirectLog "exit $code"
-        exit $code
-    }
+    } else {
 
     Write-RedirectLog ("watch Dune processes: " + ($duneNames -join ", "))
     if (-not $Quiet) {
@@ -236,6 +242,9 @@ try {
         }
         Write-RedirectLog "watch stopped"
     }
+    }
 } finally {
+    Stop-WinDivertDriver
     if ($transcribed) { Stop-Transcript | Out-Null }
 }
+exit $code

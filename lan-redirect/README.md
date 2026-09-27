@@ -50,11 +50,13 @@ If the person who plays is not a daily Administrator:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-DuneLanRedirect.ps1 -Service
 ```
 
-Remove either:
+Remove either, then close any hand-run redirect window. That also stops the WinDivert driver so Explorer can delete this folder (`WinDivert64.sys` stays locked while the driver is loaded):
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Uninstall-DuneLanRedirect.ps1
 ```
+
+Ctrl+C on a hand-run window now unloads the driver too. If a copy is still locked, `sc stop WinDivert` from an elevated prompt, then delete.
 
 ## Host-side check
 

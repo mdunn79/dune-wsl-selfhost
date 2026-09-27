@@ -1,8 +1,12 @@
 #Requires -RunAsAdministrator
-# Remove the logon task and/or Windows service. Does not delete WinDivert files.
+# Remove the logon task and/or Windows service, and unload WinDivert so this
+# folder can be deleted.
 
 $ErrorActionPreference = "Continue"
-$here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$here = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($here)) {
+    $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
 $taskName = "DuneLanRedirect"
 $svcId = "DuneLanRedirect"
 
@@ -16,4 +20,11 @@ if (Get-Service -Name $svcId -ErrorAction SilentlyContinue) {
     Stop-Service -Name $svcId -Force -ErrorAction SilentlyContinue
     sc.exe delete $svcId | Out-Null
 }
-Write-Host "Removed scheduled task and service (if they existed). WinDivert files in windivert\ were left in place."
+
+foreach ($name in @("WinDivert", "WinDivert64")) {
+    sc.exe stop $name 1>$null 2>$null
+    sc.exe delete $name 1>$null 2>$null
+}
+
+Write-Host "Removed scheduled task, DuneLanRedirect service (if they existed), and the WinDivert driver."
+Write-Host "Close any Start-DuneLanRedirect window, then this folder can be deleted."
