@@ -102,7 +102,8 @@ if ($Service) {
     <sizeThreshold>1024</sizeThreshold>
     <keepFiles>4</keepFiles>
   </log>
-  <onfailure action="restart" delay="10 sec"/>
+  <stoptimeout>15 sec</stoptimeout>
+  <onfailure action="restart" delay="15 sec"/>
   <startmode>Automatic</startmode>
   <delayedAutoStart>true</delayedAutoStart>
 </service>
@@ -112,7 +113,7 @@ if ($Service) {
     & $winsw install
     if ($LASTEXITCODE -ne 0) { throw "WinSW install failed ($LASTEXITCODE)" }
     & $winsw start
-    Write-Host "Service $svcId installed (delayed auto-start). Log: $here\logs and %LOCALAPPDATA%\DuneLanRedirect\redirect.log"
+    Write-Host "Service $svcId installed (delayed auto-start). Log: $here\logs\redirect.log (WinSW wrapper logs in the same folder)"
     Write-Host "Uninstall: .\Uninstall-DuneLanRedirect.ps1"
     return
 }
@@ -127,6 +128,6 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
     -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName $taskName
-Write-Host "Scheduled task $taskName installed (at logon, hidden, this user). Log: $env:LOCALAPPDATA\DuneLanRedirect\redirect.log"
+Write-Host "Scheduled task $taskName installed (at logon, hidden, this user). Log: $here\logs\redirect.log"
 Write-Host "Uninstall: .\Uninstall-DuneLanRedirect.ps1"
 Write-Host "Non-admin play account: re-run with -Service"
