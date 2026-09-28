@@ -29,7 +29,7 @@ $cs = Join-Path $here "DuneLanRedirect.cs"
 $wdDir = Join-Path $here "windivert"
 $cfgPath = Join-Path $here "dune-client.config.ps1"
 $example = Join-Path $here "dune-client.config.example.ps1"
-$logDir = Join-Path $env:LOCALAPPDATA "DuneLanRedirect"
+$logDir = Join-Path $here "logs"
 $logFile = Join-Path $logDir "redirect.log"
 $duneNames = @(
     "DuneSandbox-Win64-Shipping",
@@ -43,8 +43,20 @@ function Test-Ipv4([string]$Ip) {
 
 function Write-RedirectLog([string]$Message) {
     $line = "{0}  {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
-    Add-Content -Path $logFile -Value $line
-    if (-not $Quiet) { [Console]::WriteLine($line) }
+    try {
+        $fs = [System.IO.File]::Open(
+            $logFile,
+            [System.IO.FileMode]::Append,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::ReadWrite)
+        try {
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($line + [Environment]::NewLine)
+            $fs.Write($bytes, 0, $bytes.Length)
+        } finally {
+            $fs.Dispose()
+        }
+    } catch {}
+    [Console]::WriteLine($line)
 }
 
 function Get-PublicIpv4 {
@@ -160,13 +172,25 @@ if (-not ([System.Management.Automation.PSTypeName]"DuneLanRedirect").Type) {
     Add-Type -TypeDefinition $src -Language CSharp
 }
 
+$script:instanceMutex = $null
+$script:instanceOwned = $false
+try {
+    $script:instanceMutex = New-Object System.Threading.Mutex($false, "Global\DuneLanRedirect")
+    try {
+        $script:instanceOwned = $script:instanceMutex.WaitOne(8000)
+    } catch [System.Threading.AbandonedMutexException] {
+        $script:instanceOwned = $true
+    }
+} catch {
+    $script:instanceOwned = $true
+}
+if (-not $script:instanceOwned) {
+    Write-RedirectLog "another instance is already running; exiting"
+    exit 0
+}
+
 Write-RedirectLog "start public=$PublicIp lan=$LanIp quiet=$Quiet verbose=$verboseN watch=$WatchDune"
 [DuneLanRedirect]::Running = $true
-$transcribed = $false
-if ($Quiet) {
-    Start-Transcript -Path $logFile -Append | Out-Null
-    $transcribed = $true
-}
 
 function Test-DuneClientRunning {
     foreach ($n in $duneNames) {
@@ -244,7 +268,12 @@ try {
     }
     }
 } finally {
-    Stop-WinDivertDriver
-    if ($transcribed) { Stop-Transcript | Out-Null }
+    if ($script:instanceOwned) {
+        Stop-WinDivertDriver
+    }
+    if ($script:instanceOwned -and $script:instanceMutex) {
+        try { $script:instanceMutex.ReleaseMutex() } catch {}
+    }
+    if ($script:instanceMutex) { $script:instanceMutex.Dispose() }
 }
 exit $code

@@ -42,7 +42,7 @@ Still a small watcher at logon (or a service), but WinDivert is only open while 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-DuneLanRedirect.ps1
 ```
 
-Log: `%LOCALAPPDATA%\DuneLanRedirect\redirect.log`
+Log: `logs\redirect.log` in this folder (same place as the WinSW wrapper `.out.log` / `.err.log` when using `-Service`).
 
 If the person who plays is not a daily Administrator:
 
