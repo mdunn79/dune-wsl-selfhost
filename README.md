@@ -223,6 +223,7 @@ Funcom’s file browser (TCP `18888`) often **denies writes** to those inis. The
 - **WSL distro failed to start.** Often RAM (`WslMemory` too high for the host) or virtualization off.
 - **`wsl.exe` Catastrophic failure / `E_UNEXPECTED` while Ubuntu still shows Running.** The WSL control plane wedged; SSH/k3s can still be up. Run `Restart-DuneBattlegroup.ps1`. It terminates the distro, and only `wsl --shutdown`s if exec is still dead.
 - **World Stopped after a Windows/WSL reboot.** k3s flannel (`/run/flannel/subnet.env`) is missing and/or Funcom `spec.stop` stayed true (`battlegroup start` can no-op). `Restart-DuneBattlegroup.ps1` restores both, then waits until Survival is Running / true.
+- **Join timeout after a depot update; Funcom status says Stopped / no game servers.** A schema util pod can fail on a duplicate patch after the SQL already applied, leaving `DatabaseDeployment` Pending and the director suspended. The maintain job now treats missing Survival/Overmap pods as the source of truth (not the wrapped Funcom CLI table), deletes stuck util pods, and starts maps again.
 
 This installer is meant for a from-scratch Windows 11 Home machine. It will skip world create if a Funcom battlegroup namespace already exists in that Ubuntu. Re-run it anyway to refresh helpers, advertise IP, FLS DNS, join ports, and `.wslconfig` repairs; it stays a no-op for pieces that are already correct.
 

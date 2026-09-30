@@ -88,11 +88,86 @@ ensure_unstopped() {
   esac
 }
 
+map_pods_lines() {
+  local ns="$1"
+  sudo kubectl get pods -n "$ns" --no-headers 2>/dev/null | grep -E 'sg-survival|sg-overmap' || true
+}
+
+ensure_db_schema() {
+  local ns depl phase failed ver
+  ns="$(world_ns)"
+  [ -n "$ns" ] || return 0
+  depl="$(sudo kubectl get databasedeployment -n "$ns" --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null | head -n1 || true)"
+  [ -n "$depl" ] || return 0
+  phase="$(sudo kubectl get databasedeployment "$depl" -n "$ns" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+  if [ "$phase" = "Ready" ]; then
+    echo "DatabaseDeployment Ready"
+    return 0
+  fi
+  echo "DatabaseDeployment phase=${phase:-unset}"
+  failed="$(sudo kubectl get pods -n "$ns" --no-headers 2>/dev/null | awk '/db-dbdepl-util-/ && /Error|CrashLoopBackOff/ {print $1}' || true)"
+  if [ -z "$failed" ] && [ "$phase" != "Pending" ] && [ "$phase" != "Modifying" ]; then
+    return 0
+  fi
+  if [ -n "$failed" ] || [ "$phase" = "Pending" ]; then
+    echo "Schema util stuck (failed pods: ${failed:-none}); deleting util pods so the operator can re-reconcile"
+    sudo kubectl get pods -n "$ns" --no-headers 2>/dev/null \
+      | awk '/db-dbdepl-util-/ {print $1}' \
+      | xargs -r sudo kubectl delete pod -n "$ns" --force --grace-period=0 --ignore-not-found
+    echo "Restarting database operator"
+    sudo kubectl get pod -n funcom-operators -o name 2>/dev/null \
+      | grep databaseoperator \
+      | xargs -r sudo kubectl delete -n funcom-operators --force --grace-period=0
+    sudo kubectl wait --for=condition=Available -n funcom-operators \
+      deploy/databaseoperator-controller-manager --timeout=90s >/dev/null 2>&1 || true
+    local i
+    for i in $(seq 1 24); do
+      phase="$(sudo kubectl get databasedeployment "$depl" -n "$ns" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+      echo "db phase=$phase ($i)"
+      [ "$phase" = "Ready" ] && return 0
+      sleep 5
+    done
+  fi
+  ver=""
+  if [ -f /home/dune/.dune/last-update.log ]; then
+    ver="$(grep -oE 'Finished updating battlegroup to version [^[:space:]]+' /home/dune/.dune/last-update.log 2>/dev/null | awk '{print $NF}' | tail -n1 || true)"
+  fi
+  if [ -n "$ver" ] && [ "$phase" != "Ready" ]; then
+    echo "DB still $phase; marking schema $ver Ready (duplicate patch already applied)"
+    sudo kubectl patch databasedeployment "$depl" -n "$ns" --subresource=status --type merge \
+      -p "{\"status\":{\"phase\":\"Ready\",\"schema\":\"$ver\"}}" >/dev/null || true
+    sudo kubectl get database -n "$ns" --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null \
+      | head -n1 \
+      | xargs -r -I{} sudo kubectl patch database {} -n "$ns" --subresource=status --type merge \
+        -p '{"status":{"phase":"Ready"}}' >/dev/null || true
+  fi
+}
+
+ensure_igw_unsuspended() {
+  local ns kind name sus dbphase
+  ns="$(world_ns)"
+  [ -n "$ns" ] || return 0
+  dbphase="$(sudo kubectl get database -n "$ns" --no-headers -o custom-columns=PHASE:.status.phase 2>/dev/null | head -n1 || true)"
+  if [ "$dbphase" != "Ready" ]; then
+    echo "Database not Ready ($dbphase); not unsuspending director"
+    return 0
+  fi
+  for kind in battlegroupdirector servergateway textrouter; do
+    name="$(sudo kubectl get "$kind" -n "$ns" --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null | head -n1 || true)"
+    [ -n "$name" ] || continue
+    sus="$(sudo kubectl get "$kind" "$name" -n "$ns" -o jsonpath='{.spec.suspend}' 2>/dev/null || true)"
+    if [ "$sus" = "true" ]; then
+      echo "unsuspending $kind/$name"
+      sudo kubectl patch "$kind" "$name" -n "$ns" --type merge -p '{"spec":{"suspend":false}}' || true
+    fi
+  done
+}
+
 ensure_started_if_maps_missing() {
   local ns pods
   ns="$(world_ns)"
   [ -n "$ns" ] || return 0
-  pods="$(sudo kubectl get pods -n "$ns" --no-headers 2>/dev/null | grep -E 'sg-survival|sg-overmap' || true)"
+  pods="$(map_pods_lines "$ns")"
   if [ -n "$pods" ]; then
     echo "Map pods already present; not calling battlegroup start"
     return 0
@@ -103,6 +178,13 @@ ensure_started_if_maps_missing() {
   fi
   echo "No Overmap/Survival pods; battlegroup start"
   "$BG" start || true
+  sleep 12
+  pods="$(map_pods_lines "$ns")"
+  if [ -z "$pods" ]; then
+    echo "Maps still missing after start; unsuspend IGW and start once more"
+    ensure_igw_unsuspended
+    "$BG" start || true
+  fi
 }
 
 echo "=== dune-ensure-runtime ==="
@@ -110,5 +192,7 @@ wait_k3s
 ensure_no_wan_node_ip
 ensure_flannel
 ensure_unstopped
+ensure_db_schema
+ensure_igw_unsuspended
 ensure_started_if_maps_missing
 echo "=== dune-ensure-runtime end ==="

@@ -105,22 +105,42 @@ recover_operators_if_stale() {
   return 1
 }
 
+world_ns() {
+  sudo kubectl get ns --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null \
+    | grep '^funcom-seabass-' | head -n1 || true
+}
+
+map_pods_present() {
+  local ns
+  ns="$(world_ns)"
+  [ -n "$ns" ] || return 1
+  sudo kubectl get pods -n "$ns" --no-headers 2>/dev/null | grep -qE 'sg-survival' || return 1
+  sudo kubectl get pods -n "$ns" --no-headers 2>/dev/null | grep -qE 'sg-overmap' || return 1
+}
+
 maps_ready() {
-  local status
-  status="$("$BG" status 2>/dev/null || true)"
-  echo "$status" | grep -qiE '[[:space:]](Modifying|Suspended|Stopped)[[:space:]]' && return 1
-  echo "$status" | grep -qE 'Healthy' \
-    && echo "$status" | grep -qE 'Overmap[[:space:]]+Running[[:space:]]+true' \
-    && echo "$status" | grep -qE 'Survival_1[[:space:]]+Running[[:space:]]+true'
+  local ns surv over
+  ns="$(world_ns)"
+  [ -n "$ns" ] || return 1
+  surv="$(sudo kubectl get pods -n "$ns" --no-headers 2>/dev/null | awk '/sg-survival-1/ && $3=="Running" && $2=="1/1" {print $1}' | head -n1)"
+  over="$(sudo kubectl get pods -n "$ns" --no-headers 2>/dev/null | awk '/sg-overmap/ && $3=="Running" && $2=="1/1" {print $1}' | head -n1)"
+  [ -n "$surv" ] && [ -n "$over" ]
 }
 
 wait_maps_ready() {
-  echo "Waiting up to ${READY_TIMEOUT_SEC}s for Overmap + Survival Ready (ignore stale Running during Modifying)..."
+  echo "Waiting up to ${READY_TIMEOUT_SEC}s for Overmap + Survival pods Running 1/1..."
   local elapsed=0 stable=0
   local need="${READY_STABLE_CHECKS:-3}"
   while [ "$elapsed" -lt "$READY_TIMEOUT_SEC" ]; do
     "$BG" status || true
-    if maps_ready; then
+    if ! map_pods_present; then
+      echo "Map pods missing; repairing (schema/IGW/start)"
+      if [ -x /home/dune/.dune/bin/dune-ensure-runtime.sh ]; then
+        /home/dune/.dune/bin/dune-ensure-runtime.sh || true
+      fi
+      "$BG" start || true
+      stable=0
+    elif maps_ready; then
       stable=$((stable + 1))
       echo "Ready streak $stable/$need"
       if [ "$stable" -ge "$need" ]; then
@@ -135,6 +155,7 @@ wait_maps_ready() {
   done
   echo "ERROR: maps not Ready within ${READY_TIMEOUT_SEC}s" >&2
   "$BG" status || true
+  sudo kubectl get pods -A | grep -E 'funcom-seabass|NAME' || true
   return 1
 }
 
@@ -202,9 +223,12 @@ status="$("$BG" status 2>/dev/null || true)"
 echo "$status"
 
 rolled=0
-if echo "$status" | grep -qiE 'Suspended|Stopped' || ! maps_ready; then
-  echo "Battlegroup not Ready; starting (no depot download yet)"
-  "$BG" start
+if ! map_pods_present || ! maps_ready; then
+  echo "Battlegroup maps not Running 1/1; repairing then starting (no depot download yet)"
+  if [ -x /home/dune/.dune/bin/dune-ensure-runtime.sh ]; then
+    /home/dune/.dune/bin/dune-ensure-runtime.sh || true
+  fi
+  "$BG" start || true
   rolled=1
 fi
 
