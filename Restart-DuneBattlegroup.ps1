@@ -2,12 +2,14 @@
 # Queries Steam first (app_info_print 4754530). Funcom update / map roll only if the
 # public buildid is newer than the installed appmanifest, or if maps are not Ready.
 # Run from Windows PowerShell, not from inside Ubuntu.
-# Copies helper scripts from this folder into WSL (idempotent). Does not wipe operators.
+# Copies helper scripts from this folder into WSL (skips rewrite if unchanged). Does not wipe operators.
 # Does not wsl --shutdown unless .wslconfig actually needed a change, or wsl.exe is wedged.
 #
-# Daily / At log on Task Scheduler:
+# Register Daily 6:00 AM + hourly + At log on (does not start a second instance if a run is already going):
+#   powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-DuneScheduledMaintain.ps1"
+# Or run once:
 #   powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Restart-DuneBattlegroup.ps1"
-# Healthy no-op days are ~1–2 minutes (Steam query + join bind if missing). A real patch can take 45 minutes.
+# Healthy no-op hours are ~1–2 minutes (Steam query + join bind if missing). A real patch can take 45 minutes.
 # Watch restart-dune-battlegroup.log in this folder.
 
 $ErrorActionPreference = "Stop"
@@ -100,42 +102,69 @@ function Start-WslDistro {
 
 function Sync-DuneHelpers {
     $setupUnix = Convert-WinPathToWsl $PSScriptRoot
-    $names = @(
-        "dune-maintain.sh",
-        "dune-ensure-join.sh",
-        "dune-ensure-runtime.sh",
-        "dune-fix-fls-dns.sh",
-        "dune-set-advertise-ip.sh",
-        "apply-k8s-hosts.sh",
-        "coredns-custom.yaml",
-        "dune-admin.py",
-        "dune-admin.sh",
-        "dune-admin.service",
-        "dune-admin-lib.py",
-        "dune-admin.html"
-    )
+    $py = @"
+import grp, os, pathlib, pwd
+src = pathlib.Path('$setupUnix')
+dst = pathlib.Path('/home/dune/.dune/bin')
+dst.mkdir(parents=True, exist_ok=True)
+uid = pwd.getpwnam('dune').pw_uid
+gid = grp.getgrnam('dune').gr_gid
+os.chown(dst, uid, gid)
+os.chmod(dst, 0o755)
+names = [
+    'dune-maintain.sh', 'dune-ensure-join.sh', 'dune-ensure-runtime.sh',
+    'dune-fix-fls-dns.sh', 'dune-set-advertise-ip.sh', 'apply-k8s-hosts.sh',
+    'coredns-custom.yaml', 'dune-admin.py', 'dune-admin.sh',
+    'dune-admin.service', 'dune-admin-lib.py', 'dune-admin.html',
+]
+changed = 0
+for n in names:
+    p = src / n
+    if not p.is_file():
+        continue
+    data = p.read_bytes().replace(b'\r\n', b'\n').replace(b'\r', b'\n')
+    target = dst / n
+    old = target.read_bytes() if target.is_file() else None
+    if old == data:
+        print('unchanged', n)
+        continue
+    target.write_bytes(data)
+    os.chmod(target, 0o755)
+    os.chown(target, uid, gid)
+    changed = 1
+    print('updated', n)
+print('HELPERS_CHANGED' if changed else 'HELPERS_UNCHANGED')
+"@
+    $tmp = Join-Path $env:TEMP "dune-sync-helpers.py"
+    Set-Content -Path $tmp -Value $py -Encoding ASCII
+    $tmpUnix = Convert-WinPathToWsl $tmp
     $savedEap = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    & wsl.exe -d $WslDistro -u root -- bash -lc "install -d -o dune -g dune -m 755 /home/dune/.dune/bin"
-    foreach ($n in $names) {
-        $win = Join-Path $PSScriptRoot $n
-        if (-not (Test-Path $win)) { continue }
-        $src = "$setupUnix/$n"
-        $dest = "/home/dune/.dune/bin/$n"
-        & wsl.exe -d $WslDistro -u root -- bash -lc "sed 's/\\r`$//' '$src' > '$dest' && chmod +x '$dest' && chown dune:dune '$dest'"
-        if ($LASTEXITCODE -ne 0) {
-            Write-Log "WARNING: could not refresh $n"
+    $syncOut = & wsl.exe -d $WslDistro -u root -- python3 $tmpUnix 2>&1 | Out-String
+    $syncCode = $LASTEXITCODE
+    Remove-Item -Force $tmp -ErrorAction SilentlyContinue
+    if ($syncCode -ne 0) {
+        Write-Log "WARNING: could not refresh helpers"
+        foreach ($piece in (($syncOut) -split "`r?`n")) {
+            if (-not [string]::IsNullOrWhiteSpace($piece)) { Write-Log $piece }
         }
+        $ErrorActionPreference = $savedEap
+        return
     }
-    $ErrorActionPreference = $savedEap
-    Write-Log "helpers-synced"
-    $savedEap = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    & wsl.exe -d $WslDistro -u root -- bash -lc "/home/dune/.dune/bin/dune-admin.sh --install"
-    if ($LASTEXITCODE -ne 0) {
-        Write-Log "WARNING: dune-admin install/restart failed"
+    $changed = $syncOut -match "HELPERS_CHANGED"
+    Write-Log $(if ($changed) { "helpers-synced (files changed)" } else { "helpers-synced (unchanged)" })
+    if ($changed) {
+        & wsl.exe -d $WslDistro -u root -- bash -lc "/home/dune/.dune/bin/dune-admin.sh --install"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Log "WARNING: dune-admin install/restart failed"
+        } else {
+            Write-Log "dune-admin listening on LAN TCP 18889"
+        }
     } else {
-        Write-Log "dune-admin listening on LAN TCP 18889"
+        & wsl.exe -d $WslDistro -u root -- bash -lc "systemctl is-active --quiet dune-admin.service || /home/dune/.dune/bin/dune-admin.sh --install"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Log "WARNING: dune-admin was down and did not start"
+        }
     }
     $ErrorActionPreference = $savedEap
 }

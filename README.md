@@ -175,11 +175,28 @@ From PowerShell in this folder on the host (does not take the world down if Stea
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Restart-DuneBattlegroup.ps1"
 ```
 
-It queries Steam for app `4754530`, then updates and rolls maps **only** if a newer public build is waiting or the world is not Ready. After a real patch it waits until Gateway is Healthy and both maps stay Running / true (old pods still showing Running during Modifying are ignored), then binds join TCP `31982` / `31519`. A no-op is about 1–2 minutes. A real patch can take around 45 minutes. Output goes to `restart-dune-battlegroup.log`.
+It always **looks**: Steam public buildid for app `4754530`, map Ready, join TCP `31982` / `31519`, advertise IPv4. It only **acts** when something is wrong or newer:
 
-Each run also copies the helper scripts from this folder into WSL (so a newer ZIP takes effect without a full reinstall), restores flannel/`spec.stop` if a Windows reboot left the world Stopped, and forces `autoMemoryReclaim=disabled` in `.wslconfig` if it was missing or set to gradual/dropCache. That last repair is the only case that `wsl --shutdown`s on a scheduled run; once the file is correct, daily runs do not bounce WSL.
+- Steam depot download + map roll only if the public buildid differs from the installed appmanifest, or there is no local manifest.
+- `battlegroup start` only if Survival/Overmap are not Running 1/1.
+- Advertise/listing patch (and a map roll) only if the public IPv4 actually changed.
+- Join/director bind only if those ports are missing.
+- Helper files are recopied only when they differ; the LAN admin is restarted only when those files changed (or the service was down).
+- `wsl --shutdown` only if `.wslconfig` needed `autoMemoryReclaim=disabled`, or `wsl.exe` is wedged.
 
-Optional: Task Scheduler → At log on → run `Restart-DuneBattlegroup.ps1` with **Start in** set to this folder. After a host reboot, that is what brings k3s, Hagga, and join ports back without downloading the depot again.
+A no-op hour is about 1–2 minutes. A real patch can take around 45 minutes. After a patch it waits until Gateway is Healthy and both maps stay Running / true, then binds join ports. Output goes to `restart-dune-battlegroup.log`.
+
+It also restores flannel/`spec.stop` if a Windows reboot left the world Stopped.
+
+**Scheduled task (recommended):** elevated PowerShell in this folder:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-DuneScheduledMaintain.ps1"
+```
+
+That registers **DuneBattlegroupMaintain**: Daily **6:00 AM** local, repeat **every hour**, plus **At log on** for the Windows user who ran it. **Start in** is this folder. If a run is already going, the next tick is skipped (a depot apply can take ~45 minutes). After a host reboot, At log on brings k3s, Hagga, and join ports back without downloading the depot again. Hourly Steam checks catch an Experimental patch soon after Funcom ships it, so players are not stuck on an old build until the next morning.
+
+Uninstall: `.\Install-DuneScheduledMaintain.ps1 -Uninstall`. If you already created a hand-made task that runs `Restart-DuneBattlegroup.ps1`, disable or delete that duplicate first so two jobs do not overlap.
 
 To see if the world is joinable without rolling maps:
 
