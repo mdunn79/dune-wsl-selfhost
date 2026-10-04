@@ -350,9 +350,10 @@ def discover_player_sql() -> tuple[str | None, str]:
         (
             "SELECT COALESCE(a.\"user\"::text, a.funcom_id::text, ps.account_id::text) AS player_id, "
             "COALESCE(ps.character_name::text, '') AS name, "
-            "COALESCE(ps.last_login_time::text, '') AS last_seen, "
+            "COALESCE(ps.last_avatar_activity::text, '') AS last_seen, "
             "CASE WHEN lower(COALESCE(ps.online_status::text,'')) "
-            "IN ('1','t','true','online') THEN '1' ELSE '0' END AS is_online "
+            "IN ('1','t','true','online') THEN '1' ELSE '0' END AS is_online, "
+            "CASE WHEN COALESCE(ps.transfer_count, 0) > 0 THEN '1' ELSE '0' END AS transferred "
             "FROM dune.player_state ps "
             "LEFT JOIN dune.accounts a ON a.id = ps.account_id "
             "ORDER BY 2, 1 LIMIT 2000"
@@ -360,9 +361,10 @@ def discover_player_sql() -> tuple[str | None, str]:
         (
             "SELECT COALESCE(account_id::text, player_controller_id::text) AS player_id, "
             "COALESCE(character_name::text, '') AS name, "
-            "COALESCE(last_login_time::text, '') AS last_seen, "
+            "COALESCE(last_avatar_activity::text, '') AS last_seen, "
             "CASE WHEN lower(COALESCE(online_status::text,'')) "
-            "IN ('1','t','true','online') THEN '1' ELSE '0' END AS is_online "
+            "IN ('1','t','true','online') THEN '1' ELSE '0' END AS is_online, "
+            "CASE WHEN COALESCE(transfer_count, 0) > 0 THEN '1' ELSE '0' END AS transferred "
             "FROM dune.player_state "
             "ORDER BY 2, 1 LIMIT 2000"
         ),
@@ -384,12 +386,13 @@ def discover_player_sql() -> tuple[str | None, str]:
     name_prefs = ("character_name", "displayname", "display_name", "name", "username", "gamertag")
     id_prefs = ("fls_id", "flsid", "playerid", "player_id", "playfabid", "playfab_id", "funcom_id", "id")
     seen_prefs = (
-        "last_login_time",
-        "last_login",
-        "lastlogin",
+        "last_avatar_activity",
         "last_seen",
         "lastseen",
         "last_played",
+        "last_login_time",
+        "last_login",
+        "lastlogin",
         "updated_at",
         "updatedat",
         "login_time",
@@ -659,12 +662,16 @@ def load_players() -> tuple[list[dict], str]:
                 pid = normalize_player_id(parts[0].strip())
                 if pid.lower() in ("player_id", "id"):
                     continue
+                xfer = False
+                if len(parts) > 4:
+                    xfer = parts[4].strip().lower() in ("1", "t", "true")
                 players.append(
                     {
                         "player_id": pid,
                         "name": parts[1] if len(parts) > 1 else "",
                         "last_seen": parts[2] if len(parts) > 2 else "",
                         "online": (parts[3].strip() == "1") if len(parts) > 3 else False,
+                        "transferred": xfer,
                     }
                 )
     online_ids = set()
@@ -691,6 +698,7 @@ def load_players() -> tuple[list[dict], str]:
                     "online": True,
                     "banned": pid in bans,
                     "whitelisted": pid in wl_ids,
+                    "transferred": False,
                 }
             )
     players.sort(key=lambda p: (not p.get("online"), (p.get("name") or "").lower(), p.get("player_id") or ""))

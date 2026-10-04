@@ -469,7 +469,9 @@ def player_row(pid: str) -> dict:
         "COALESCE(a.funcom_id,''), COALESCE(ps.player_pawn_id::text,''), "
         "COALESCE(f.faction_id::text,''), COALESCE(ps.id::text,''), "
         "COALESCE(ps.life_state::text,''), COALESCE(ps.character_state::text,''), "
-        "COALESCE(a.platform_name,'') "
+        "COALESCE(a.platform_name,''), COALESCE(ps.last_avatar_activity::text,''), "
+        "COALESCE(ps.transfer_count::text,'0'), "
+        "COALESCE(ps.last_character_state_change::text,'') "
         "FROM dune.player_state ps "
         "LEFT JOIN dune.accounts a ON a.id = ps.account_id "
         "LEFT JOIN dune.player_faction f ON f.actor_id = ps.player_pawn_id "
@@ -493,6 +495,10 @@ def player_row(pid: str) -> dict:
         "life_state": r[10] if len(r) > 10 else "",
         "character_state": r[11] if len(r) > 11 else "",
         "platform": r[12] if len(r) > 12 else "",
+        "last_seen": r[13] if len(r) > 13 else "",
+        "transfer_count": r[14] if len(r) > 14 else "0",
+        "transferred": (r[14].strip() not in ("", "0")) if len(r) > 14 else False,
+        "last_state_change": r[15] if len(r) > 15 else "",
     }
 
 

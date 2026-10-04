@@ -307,7 +307,7 @@ async function renderPlayers(){
     <td>${esc(p.name||'')}</td>
     <td>${p.online?'<span class="ok">online</span>':'<span class="muted">offline</span>'}</td>
     <td>${p.banned?'<span class="bad">ban</span>':''} ${p.whitelisted?'wl':''}</td>
-    <td>${esc(p.last_seen||'')}</td>
+    <td>${(p.last_seen||'').trim()?esc(p.last_seen):'<span class="muted">never</span>'}${p.transferred?' <span class="muted">xfer</span>':''}</td>
     <td>${esc(p.note||'')}</td>
     <td>
       <button class="act" data-use="${esc(p.player_id)}">Use</button>
@@ -319,7 +319,7 @@ async function renderPlayers(){
     </td>
   </tr>`).join('');
   $('#plist').innerHTML = (d.error?`<p class="bad">${esc(d.error)}</p>`:'') +
-    `<table><thead><tr><th>FLS</th><th>Character</th><th></th><th></th><th>Last login</th><th>Note</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan=7>No characters</td></tr>'}</tbody></table>
+    `<table><thead><tr><th>FLS</th><th>Character</th><th></th><th></th><th>Last seen here</th><th>Note</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan=7>No characters</td></tr>'}</tbody></table>
      <p class="row"><label>Ban hours (empty = until unban) <input id="banhrs" type="number" style="width:6em"/></label>
      <label>Note <input id="pnote" style="min-width:16em"/></label>
      <button class="act" id="savenote">Save note for Use id</button></p>`;
@@ -349,7 +349,7 @@ async function loadChar(id){
     <p><b>${esc(p.name)}</b> · ${(d.mentors||[]).map(esc).join(', ') || 'no mentor'} ·
        caste ${(d.castes||[]).map(esc).join(', ') || '?'} · ${esc(v.map||p.map||'')} ·
        ${esc(p.life_state||'')} / ${esc(p.online_status)} · ${esc(p.platform||'')}</p>
-    <p>FLS <code>${esc(p.fls_id)}</code> · controller ${esc(p.controller_id)} · last login ${esc(p.last_login)}</p>
+    <p>FLS <code>${esc(p.fls_id)}</code> · controller ${esc(p.controller_id)} · last seen here ${(p.last_seen||'').trim()?esc(p.last_seen):'<span class="muted">never on this world</span>'}${p.transferred?(' · transferred · origin last login '+esc(p.last_login||'')):''}</p>
     <p>Health ${esc(v.health)}/${esc(v.health_max)} · water ${esc(v.hydration)} · spice ${esc(v.spice)}
        · heat ${esc(v.heat)} ${v.heatstroke?'<span class="bad">heatstroke</span>':''}
        · Eyes of Ibad ${esc(v.eyes_of_ibad)}%</p>
