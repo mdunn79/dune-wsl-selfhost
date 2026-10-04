@@ -98,6 +98,16 @@ lf "$SETUP_SRC/dune-maintain.sh" /home/dune/.dune/bin/dune-maintain.sh
 lf "$SETUP_SRC/dune-fix-fls-dns.sh" /home/dune/.dune/bin/dune-fix-fls-dns.sh
 lf "$SETUP_SRC/dune-set-advertise-ip.sh" /home/dune/.dune/bin/dune-set-advertise-ip.sh
 lf "$SETUP_SRC/dune-ensure-runtime.sh" /home/dune/.dune/bin/dune-ensure-runtime.sh
+lf "$SETUP_SRC/dune-admin.py" /home/dune/.dune/bin/dune-admin.py
+lf "$SETUP_SRC/dune-admin.sh" /home/dune/.dune/bin/dune-admin.sh
+lf "$SETUP_SRC/dune-admin-lib.py" /home/dune/.dune/bin/dune-admin-lib.py
+if [ -f "$SETUP_SRC/dune-admin.html" ]; then
+  sed 's/\r$//' "$SETUP_SRC/dune-admin.html" > /home/dune/.dune/bin/dune-admin.html
+  chmod 644 /home/dune/.dune/bin/dune-admin.html
+fi
+if [ -f "$SETUP_SRC/dune-admin.service" ]; then
+  sed 's/\r$//' "$SETUP_SRC/dune-admin.service" > /home/dune/.dune/bin/dune-admin.service
+fi
 if [ -f "$SETUP_SRC/coredns-custom.yaml" ]; then
   sed 's/\r$//' "$SETUP_SRC/coredns-custom.yaml" > /home/dune/.dune/bin/coredns-custom.yaml
 fi
@@ -363,6 +373,11 @@ chmod_filebrowser_usersettings
 
 echo "=== bind join ports ==="
 as_dune "DUNE_LAN_IP=$LAN_IP /home/dune/.dune/bin/dune-ensure-join.sh"
+
+echo "=== LAN web admin :18889 ==="
+if [ -x /home/dune/.dune/bin/dune-admin.sh ]; then
+  /home/dune/.dune/bin/dune-admin.sh --install || true
+fi
 
 if ! maps_ready; then
   echo "=== wait maps Ready after FLS DNS rewrite (Survival/Overmap containers restart once) ==="

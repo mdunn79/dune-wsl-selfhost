@@ -1,0 +1,18 @@
+[Unit]
+Description=Dune WSL LAN web admin (TCP 18889)
+After=network-online.target k3s.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dune
+Group=dune
+WorkingDirectory=/home/dune
+Environment=HOME=/home/dune
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/dune/.dune/bin/dune-admin.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

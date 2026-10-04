@@ -22,7 +22,7 @@ if [ -z "$LAN_IP" ]; then
 fi
 
 /home/dune/.dune/bin/apply-k8s-hosts.sh
-if [ -x /home/dune/.dune/bin/dune-fix-fls-dns.sh ]; then
+if [ "${SKIP_FLS_DNS:-0}" != "1" ] && [ -x /home/dune/.dune/bin/dune-fix-fls-dns.sh ]; then
   /home/dune/.dune/bin/dune-fix-fls-dns.sh || true
 fi
 
@@ -68,5 +68,23 @@ else
   if [ "$bound" -ne 1 ]; then
     echo "WARNING: ${LAN_IP}:31519 (director) is not listening" >&2
     tail -n 15 /home/dune/.dune/director.log >&2 || true
+  fi
+fi
+
+FB_SVC="$(sudo kubectl get svc -n "$NS" --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null | grep -E 'fb-svc|filebrowser' | head -n1 || true)"
+if [ -n "$FB_SVC" ]; then
+  if sudo ss -ltn | grep -qE ':18888\b'; then
+    echo "already listening ${LAN_IP}:18888 (file browser)"
+  else
+    FB_PORT="$(sudo kubectl get svc -n "$NS" "$FB_SVC" -o jsonpath='{.spec.ports[0].port}' 2>/dev/null || echo 80)"
+    sudo pkill -f "port-forward.*${FB_SVC}.*18888" >/dev/null 2>&1 || true
+    nohup sudo kubectl -n "$NS" port-forward --address "$LAN_IP" "svc/${FB_SVC}" "18888:${FB_PORT}" \
+      >/home/dune/.dune/filebrowser-18888.log 2>&1 &
+    sleep 2
+    if sudo ss -ltn | grep -qE ':18888\b'; then
+      echo "File Browser listening on ${LAN_IP}:18888"
+    else
+      echo "WARNING: ${LAN_IP}:18888 (file browser) is not listening" >&2
+    fi
   fi
 fi

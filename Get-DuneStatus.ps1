@@ -35,4 +35,13 @@ Write-Host "Join from another computer only when Overmap and Survival_1 are both
 Write-Host "Queue + offline usually means Survival is still starting, or director TCP 31519 is not bound."
 Write-Host "Internet timeouts with a visible listing usually mean Unreal still has no -ExternalAddress (LAN bind only)."
 Write-Host "Checking advertise vs bind and LAN join listeners..."
-& wsl.exe -d $distro -u dune -- bash -lc "/home/dune/.dune/bin/dune-set-advertise-ip.sh --status; echo; sudo ss -ltn | grep -E ':31982|:31519' || true; sudo ss -lun | grep -E ':7777|:7778|:7888|:7889' || true"
+& wsl.exe -d $distro -u dune -- bash -lc "/home/dune/.dune/bin/dune-set-advertise-ip.sh --status; echo; sudo ss -ltn | grep -E ':31982|:31519|:18888|:18889' || true; sudo ss -lun | grep -E ':7777|:7778|:7888|:7889' || true"
+$lan = ""
+$cfgPath2 = Join-Path $PSScriptRoot "dune-install.config.ps1"
+if (Test-Path $cfgPath2) {
+    $cfg2 = Get-Content -Raw $cfgPath2 | Invoke-Expression
+    if ($cfg2.LanIp) { $lan = [string]$cfg2.LanIp.Trim() }
+}
+if ($lan) {
+    Write-Host "LAN web admin: http://$($lan):18889  (token: wsl -u dune -- cat /home/dune/.dune/admin.token)"
+}

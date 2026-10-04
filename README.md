@@ -106,7 +106,7 @@ If Windows Firewall is on (it usually is) and clients cannot join, allow **inbou
 
 ```powershell
 New-NetFirewallRule -DisplayName "Dune WSL UDP game" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 7777-7810,7888-7941
-New-NetFirewallRule -DisplayName "Dune WSL TCP join" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 31982,31519,18888
+New-NetFirewallRule -DisplayName "Dune WSL TCP join" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 31982,31519,18888,18889
 ```
 
 Or: Windows Security → Firewall & network protection → Advanced settings → Inbound Rules, and allow those ports yourself.
@@ -128,7 +128,7 @@ Set `AdvertiseIp = "auto"` (or paste the current public IPv4), then re-run the i
 
 A listing you can see with **connection timed out** usually means the phone book is public but the game process is still telling clients to UDP to `LanIp`. `Get-DuneStatus.ps1` should show `running_ExternalAddress` equal to the public IPv4, and `running_MultiHome` equal to `LanIp`.
 
-Do **not** port-forward TCP `18888` (Funcom file browser) unless you intend to expose that admin UI to the internet.
+Do **not** port-forward TCP `18888` (Funcom file browser) or TCP `18889` (this pack’s LAN web admin) unless you intend to expose those admin UIs to the internet.
 
 If the ISP uses CGNAT (no real public IPv4 at all), forwarding will not reach the host. LAN play still works (`AdvertiseIp` empty).
 
@@ -194,6 +194,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Get-DuneNetHealth.ps1
 ```
 
 If the host has more than one WSL distro, keep `Distro = "Ubuntu"` in the config (the installer sets that distro as default).
+
+## 10. Web admin (LAN browser)
+
+The installer starts a token-gated admin on **`http://<LanIp>:18889`** (LAN only; do not port-forward it). Full tabs, character sheet, GM commands, and safety notes: **[ADMIN-PANEL.md](ADMIN-PANEL.md)**.
+
+1. In WSL: `cat /home/dune/.dune/admin.token` (do not share that file).
+2. Paste the token on the login page.
+3. Keep Windows Firewall inbound TCP `18889` allowed if you browse from another PC.
+
+The panel binds **only** `LanIp`. Kick/grants/broadcasts use Funcom’s in-cluster RabbitMQ ServerCommand path; “published” means the broker took the message. Restore import overwrites the live world (type `RESTORE`). INI rate changes need Apply UserSettings plus a battlegroup restart.
 
 ## Play styles
 

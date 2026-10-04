@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Dune admin</title>
+<style>
+:root { --bg:#12110e; --card:#1c1a16; --ink:#e8e0d0; --muted:#9a907e; --acc:#c4a35a; --bad:#c45a4a; --ok:#7aa36a; }
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.45 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--ink)}
+header{padding:14px 18px;border-bottom:1px solid #2a261f;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
+h1{font-size:18px;margin:0;color:var(--acc)}
+nav button{background:#2a261f;color:var(--ink);border:1px solid #3a342a;padding:6px 11px;margin:0 4px 4px 0;cursor:pointer;border-radius:4px}
+nav button.on{background:var(--acc);color:#1c160a}
+main{padding:14px 18px 48px;max-width:1180px}
+.card{background:var(--card);border:1px solid #2a261f;border-radius:8px;padding:12px 14px;margin:0 0 12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+label{color:var(--muted);font-size:13px}
+input,select,textarea{background:#0e0d0b;color:var(--ink);border:1px solid #3a342a;padding:6px 8px;border-radius:4px}
+textarea{width:100%;min-height:64px}
+button.act{background:#3a3220;color:var(--acc);border:1px solid var(--acc);padding:6px 11px;cursor:pointer;border-radius:4px}
+button.bad{border-color:var(--bad);color:#f0c0b8;background:#3a201c}
+.ok{color:var(--ok)} .bad{color:var(--bad)} .muted{color:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:5px 7px;border-bottom:1px solid #2a261f;vertical-align:top}
+pre{white-space:pre-wrap;word-break:break-word;background:#0e0d0b;padding:10px;border-radius:6px;font-size:12px;max-height:380px;overflow:auto}
+.pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;background:#2a261f}
+a{color:var(--acc)}
+.login{max-width:420px;margin:12vh auto;background:var(--card);padding:24px;border-radius:10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}
+</style>
+</head>
+<body>
+<div id="login" class="login" hidden>
+  <h1>Dune admin</h1>
+  <p class="muted">Token is in <code>/home/dune/.dune/admin.token</code>. LAN only.</p>
+  <form id="lf"><input id="tok" type="password" autocomplete="current-password" placeholder="admin token" style="width:100%"/><p><button class="act" type="submit">Enter</button></p></form>
+  <p id="le" class="bad"></p>
+</div>
+<div id="app" hidden>
+<header>
+  <h1>Dune admin</h1>
+  <span id="joinpill" class="pill">…</span>
+  <label class="muted"><input type="checkbox" id="autoref" checked/> Auto-refresh</label>
+  <nav>
+    <button data-tab="world" class="on">World</button>
+    <button data-tab="players">Players</button>
+    <button data-tab="char">Character</button>
+    <button data-tab="tools">Tools</button>
+    <button data-tab="settings">Settings</button>
+    <button data-tab="logs">Logs</button>
+    <button data-tab="audit">Audit</button>
+  </nav>
+</header>
+<main>
+<section id="world" class="tab">
+  <div class="card" id="worldcard">Loading…</div>
+  <div class="card">
+    <div class="row">
+      <button class="act" data-op="start">Start</button>
+      <button class="act bad" data-op="stop" data-confirm="Stop the battlegroup? Players will be kicked.">Stop</button>
+      <button class="act bad" data-op="restart" data-confirm="Restart maps? Everyone will DC.">Restart</button>
+      <button class="act" data-op="repair">Repair join ports</button>
+      <button class="act" data-op="backup">Database backup</button>
+      <button class="act" data-op="advertise-auto" data-confirm="Set listing to public IPv4? Maps restart if the address changes.">Advertise public</button>
+      <button class="act" data-op="advertise-lan" data-confirm="Set listing to LAN only? Maps restart if the address changes.">Advertise LAN</button>
+      <button class="act" data-op="check-update">Check Steam update</button>
+      <button class="act bad" data-op="apply-update" data-confirm="Run maintain? Maps roll only if a newer depot is waiting.">Apply depot if newer</button>
+    </div>
+    <p class="muted">Repair skips FLS DNS rewrite (will not bounce Hagga). Apply depot uses the same job as the daily scheduled task.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 8px">Scheduled restart</h3>
+    <div class="row">
+      <label>Local time <input id="rsat" type="datetime-local"/></label>
+      <label>Lead seconds <input id="rslead" type="number" value="600" style="width:6em"/></label>
+      <button class="act" id="rssave">Schedule</button>
+      <button class="act" id="rscancel">Cancel</button>
+    </div>
+    <p class="muted" id="rsnow"></p>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 8px">Backups</h3>
+    <p class="muted">Import overwrites the live world. Type RESTORE to confirm.</p>
+    <div class="row">
+      <input id="rstxt" placeholder="RESTORE" style="width:8em"/>
+      <button class="act bad" id="rsdo">Import selected</button>
+    </div>
+    <div id="bups"></div>
+  </div>
+</section>
+<section id="players" class="tab" hidden>
+  <div class="card">
+    <div class="row">
+      <label>Broadcast title <input id="btitle" value="Server"/></label>
+      <label>Seconds <input id="bdur" type="number" value="30" style="width:5em"/></label>
+      <input id="pfilt" placeholder="Filter name or id" style="min-width:14em"/>
+    </div>
+    <textarea id="bbody" placeholder="Message to everyone online"></textarea>
+    <p class="row">
+      <button class="act" id="bcast">Broadcast</button>
+      <button class="act" id="bshut">Restart countdown (10 min)</button>
+      <button class="act" id="bcancel">Cancel shutdown notice</button>
+    </p>
+  </div>
+  <div class="card">
+    <label><input type="checkbox" id="wlenable"/> Enforce whitelist (kick anyone not listed)</label>
+    <p class="muted">Ban is local JSON + kick. Optional hours = temp ban. Notes stay on this host.</p>
+    <div id="plist">Loading…</div>
+  </div>
+</section>
+<section id="char" class="tab" hidden>
+  <div class="card row">
+    <label>FLS id <input id="cid" size="36"/></label>
+    <button class="act" id="cload">Load</button>
+  </div>
+  <div class="card" id="cdetail">Pick a character from Players (Use) or paste an FLS id.</div>
+</section>
+<section id="tools" class="tab" hidden>
+  <div class="card">
+    <p class="muted">Target must be <b>online</b> for live GM commands.</p>
+    <div class="row">
+      <label>Player id <input id="tid" size="36"/></label>
+      <label>Teleport onto <input id="toid" placeholder="other FLS id" size="28"/></label>
+      <button class="act" id="tpto">Teleport to player</button>
+    </div>
+    <div class="row">
+      <label>Item <input id="item" list="items" placeholder="search or FName"/></label>
+      <datalist id="items"></datalist>
+      <label>Qty <input id="qty" type="number" value="1" style="width:5em"/></label>
+      <button class="act" id="grant">Grant item</button>
+    </div>
+    <div class="row">
+      <label>XP <input id="xp" type="number" value="1000" style="width:7em"/></label>
+      <button class="act" id="axp">Award XP</button>
+      <label>Skill pts <input id="sp" type="number" value="0" style="width:5em"/></label>
+      <button class="act" id="ask">Set unspent points</button>
+      <button class="act" id="water">Refill water</button>
+    </div>
+    <div class="row">
+      <label>Module
+        <select id="smod"></select>
+      </label>
+      <label>Level <input id="slev" type="number" value="1" style="width:4em"/></label>
+      <button class="act" id="sset">Set skill module</button>
+    </div>
+    <div class="row">
+      <label>X <input id="x" style="width:7em"/></label>
+      <label>Y <input id="y" style="width:7em"/></label>
+      <label>Z <input id="z" style="width:7em"/></label>
+      <button class="act" id="locate">Read location</button>
+      <button class="act" id="tp">Teleport (safe snap)</button>
+    </div>
+    <div class="row">
+      <label>Vehicle
+        <select id="veh">
+          <option value="Sandbike|T6">Sandbike T6</option>
+          <option value="Sandbike|T6_Combat">Sandbike T6 Combat</option>
+          <option value="Buggy|T6">Buggy T6</option>
+          <option value="Ornithopter|T6">Ornithopter T6</option>
+          <option value="Ornithopter|T6_Scout">Ornithopter T6 Scout</option>
+        </select>
+      </label>
+      <button class="act" id="spawnv">Spawn at coords</button>
+      <button class="act" id="welcomenow">Grant welcome kit now</button>
+    </div>
+    <div class="row">
+      <button class="act bad" id="wipeinv">Wipe inventory</button>
+      <button class="act bad" id="wipeprog">Reset progression</button>
+    </div>
+  </div>
+</section>
+<section id="settings" class="tab" hidden>
+  <div class="card">
+    <h3 style="margin:0 0 8px">Rates / world INI</h3>
+    <p class="muted">Writes File Browser UserSettings and Funcom setup/config. Apply copies defaults; <b>restart maps</b> for the game to load them. Base backup seconds (604800 = 7 days) is the cooldown lever.</p>
+    <div id="inikeys"></div>
+    <p class="row">
+      <button class="act" id="inisave">Save INIs</button>
+      <button class="act bad" id="iniapply">Apply UserSettings</button>
+    </p>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 8px">Welcome kit / webhook / token</h3>
+    <div class="row">
+      <label><input type="checkbox" id="wen"/> Auto-grant welcome kit on first join</label>
+    </div>
+    <p class="muted">Items (FName,qty per line), e.g. <code>Water,5</code></p>
+    <textarea id="witems" placeholder="Water,5"></textarea>
+    <div class="row">
+      <label>Discord webhook <input id="whurl" type="password" placeholder="https://discord.com/api/webhooks/…" style="min-width:22em"/></label>
+      <span class="muted" id="whhost"></span>
+    </div>
+    <p class="row">
+      <button class="act" id="cfgsave">Save kit / webhook</button>
+      <button class="act bad" id="rottok">Rotate admin token</button>
+    </p>
+    <p id="newtok" class="ok"></p>
+  </div>
+</section>
+<section id="logs" class="tab" hidden>
+  <div class="card row">
+    <button class="act" data-log="survival">Survival</button>
+    <button class="act" data-log="overmap">Overmap</button>
+    <button class="act" data-log="director">Director</button>
+    <button class="act" data-log="gateway">Gateway</button>
+    <button class="act" data-log="textrouter">Text router</button>
+  </div>
+  <pre id="logbox">Pick a log.</pre>
+</section>
+<section id="audit" class="tab" hidden>
+  <div class="card" id="auditbox">Loading…</div>
+</section>
+<pre id="out"></pre>
+</main>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+let CATALOG = {items:[], skills:[]};
+let SEL_BACKUP = "";
+function show(id){
+  document.querySelectorAll('.tab').forEach(e => e.hidden = e.id !== id);
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab===id));
+  if (id==='audit') loadAudit();
+  if (id==='settings') loadSettings();
+  if (id==='world') loadBackups();
+}
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => show(b.dataset.tab));
+function token(){ return sessionStorage.getItem('dune_admin_tok') || ''; }
+function esc(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function api(path, body){
+  const opt = {headers:{'X-Admin-Token': token()}};
+  if (body !== undefined){
+    opt.method='POST';
+    opt.headers['Content-Type']='application/json';
+    opt.body=JSON.stringify(body);
+  }
+  const r = await fetch(path, opt);
+  if (r.status === 401){ sessionStorage.removeItem('dune_admin_tok'); location.reload(); throw new Error('auth'); }
+  const t = await r.text();
+  try { return JSON.parse(t); } catch { return {ok:false, error:t}; }
+}
+function out(x){ $('#out').textContent = typeof x==='string'?x:JSON.stringify(x,null,2); }
+$('#lf').onsubmit = async (e)=>{
+  e.preventDefault();
+  sessionStorage.setItem('dune_admin_tok', $('#tok').value.trim());
+  const r = await fetch('/api/status', {headers:{'X-Admin-Token': token()}});
+  if (!r.ok){ $('#le').textContent='Bad token'; return; }
+  location.reload();
+};
+async function boot(){
+  const r = await fetch('/api/status', {headers:{'X-Admin-Token': token()}});
+  if (r.status === 401){ $('#login').hidden=false; return; }
+  $('#app').hidden=false;
+  CATALOG = await api('/api/catalog');
+  (CATALOG.items||[]).forEach(i=>{ const o=document.createElement('option'); o.value=i[1]; o.label=i[0]; $('#items').appendChild(o); });
+  (CATALOG.skills||[]).forEach(s=>{ const o=document.createElement('option'); o.value=s; o.textContent=s; $('#smod').appendChild(o); });
+  renderWorld(await r.json());
+  renderPlayers();
+  loadBackups();
+  setInterval(()=>{ if ($('#autoref').checked && !$('#app').hidden) refresh(); }, 15000);
+}
+async function refresh(){
+  renderWorld(await api('/api/status'));
+  if (!$('#players').hidden) renderPlayers();
+}
+function renderWorld(st){
+  const j = st.joinable;
+  $('#joinpill').textContent = j ? 'joinable' : 'not joinable';
+  $('#joinpill').style.color = j ? 'var(--ok)' : 'var(--bad)';
+  const maps = (st.maps||[]).map(m => `<tr><td>${esc(m.kind)}</td><td>${esc(m.name)}</td><td>${esc(m.phase)}</td><td>${m.ready?'ready':'not ready'} ${esc(m.ready_col||'')}</td></tr>`).join('');
+  const p = st.ports||{};
+  const sm = st.steam||{};
+  const h = st.health||{};
+  const n = st.net||{};
+  const pods = (h.pods||[]).map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.ready)}</td><td>${esc(x.restarts)}</td><td>${esc(x.cpu)}</td><td>${esc(x.mem)}</td></tr>`).join('');
+  const rem = (n.remotes||[]).map(x => `<tr><td>${esc(x.ip)}</td><td>${esc(x.kind)}</td><td>${x.count}</td></tr>`).join('');
+  const notes = (st.join_notes||[]).join(' · ') || (j ? 'Survival, Overmap, and join ports are up' : '');
+  const sch = st.schedule;
+  $('#rsnow').textContent = sch && sch.at ? ('Scheduled at ' + new Date(sch.at*1000).toLocaleString() + (sch.announced?' (countdown sent)':'')) : 'No restart scheduled';
+  $('#worldcard').innerHTML = `
+    <p><b>${esc(st.bg||'no battlegroup')}</b> <span class="muted">${esc(st.ns||'')}</span></p>
+    <p>${st.updating ? '<span class="bad">Steam/maintain running</span>' : '<span class="ok">Not updating</span>'} · ${esc(notes)}</p>
+    <p>Steam local <code>${esc(sm.local||'?')}</code> · public <code>${esc(sm.public||'?')}</code> · ${sm.update_available?'<span class="bad">update available</span>':'in sync'}</p>
+    <p>WSL reclaim <b>${esc(h.wsl_reclaim||'?')}</b> · ${esc(h.mem||'')} · disk ${esc(h.disk||'')}</p>
+    <p>Rubberband TimeStamp expired (15m): <b>${n.expired_15m||0}</b></p>
+    <p>Characters ${st.player_count_roster||0} · online ${st.player_count_known||0}</p>
+    <p>RMQ 31982 ${p.rmq_31982?'<span class="ok">up</span>':'<span class="bad">down</span>'} ·
+       Director 31519 ${p.director_31519?'<span class="ok">up</span>':'<span class="bad">down</span>'} ·
+       File Browser ${p.filebrowser_18888?'<span class="ok">up</span>':'<span class="muted">down</span>'}</p>
+    <p><a href="${esc(st.filebrowser)}" target="_blank" rel="noopener">File Browser</a> ·
+       <a href="${esc(st.director)}" target="_blank" rel="noopener">Director</a></p>
+    <pre>${esc(st.advertise||'')}</pre>
+    <div class="grid">
+      <div><b>Maps</b><table><thead><tr><th>Map</th><th>Pod</th><th>Phase</th><th></th></tr></thead><tbody>${maps||'<tr><td colspan=4>none</td></tr>'}</tbody></table></div>
+      <div><b>Resources</b><table><thead><tr><th>Pod</th><th>Ready</th><th>Restarts</th><th>CPU</th><th>RAM</th></tr></thead><tbody>${pods||'<tr><td colspan=5>n/a</td></tr>'}</tbody></table></div>
+    </div>
+    <p><b>Join path</b></p>
+    <table><thead><tr><th>RemoteAddr</th><th>Kind</th><th>Hits</th></tr></thead><tbody>${rem||'<tr><td colspan=3>no clients in last 15m</td></tr>'}</tbody></table>`;
+}
+async function renderPlayers(){
+  const d = await api('/api/players');
+  $('#wlenable').checked = !!(d.whitelist||{}).enabled;
+  const q = ($('#pfilt').value||'').toLowerCase();
+  const rows = (d.players||[]).filter(p => !q || (p.name||'').toLowerCase().includes(q) || (p.player_id||'').toLowerCase().includes(q)).map(p => `<tr>
+    <td><code>${esc(p.player_id||'')}</code></td>
+    <td>${esc(p.name||'')}</td>
+    <td>${p.online?'<span class="ok">online</span>':'<span class="muted">offline</span>'}</td>
+    <td>${p.banned?'<span class="bad">ban</span>':''} ${p.whitelisted?'wl':''}</td>
+    <td>${esc(p.last_seen||'')}</td>
+    <td>${esc(p.note||'')}</td>
+    <td>
+      <button class="act" data-use="${esc(p.player_id)}">Use</button>
+      <button class="act" data-kick="${esc(p.player_id)}">Kick</button>
+      <button class="act bad" data-ban="${esc(p.player_id)}">Ban</button>
+      <button class="act" data-unban="${esc(p.player_id)}">Unban</button>
+      <button class="act" data-wl="${esc(p.player_id)}">WL</button>
+      <button class="act" data-char="${esc(p.player_id)}">Sheet</button>
+    </td>
+  </tr>`).join('');
+  $('#plist').innerHTML = (d.error?`<p class="bad">${esc(d.error)}</p>`:'') +
+    `<table><thead><tr><th>FLS</th><th>Character</th><th></th><th></th><th>Last login</th><th>Note</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan=7>No characters</td></tr>'}</tbody></table>
+     <p class="row"><label>Ban hours (empty = until unban) <input id="banhrs" type="number" style="width:6em"/></label>
+     <label>Note <input id="pnote" style="min-width:16em"/></label>
+     <button class="act" id="savenote">Save note for Use id</button></p>`;
+  const sn = $('#savenote');
+  if (sn) sn.onclick = async ()=> out(await api('/api/action',{op:'save-note', player_id:$('#tid').value||$('#cid').value, note:$('#pnote').value}));
+}
+async function loadChar(id){
+  $('#cid').value = id;
+  $('#tid').value = id;
+  const d = await api('/api/player?id='+encodeURIComponent(id));
+  if (!d.ok){ $('#cdetail').innerHTML = `<p class="bad">${esc(d.error||'not found')}</p>`; return; }
+  const p = d.player||{};
+  const inv = (d.inventory||[]).map(i=>`<tr><td>${esc(i.template_id)}</td><td>${esc(i.qty)}</td><td>${esc(i.quality)}</td><td>${esc(i.inv)}</td></tr>`).join('');
+  const g = (d.guilds||[]).map(x=>`${esc(x.name)} (${esc(x.role)})`).join(', ') || 'none';
+  const cur = (d.currency||[]).map(x=>`${esc(x.id)}=${esc(x.balance)}`).join(', ') || 'none';
+  const bases = (d.bases||[]).map(b=>`<tr><td>${esc(b.id)}</td><td>${esc(b.map||b.backup||'')}</td></tr>`).join('');
+  const lr = (d.landsraad||[]).map(x=>`<tr><td>${esc(x.house)}</td><td>${esc(x.amount)}</td></tr>`).join('');
+  const loc = d.location ? `${d.location.x}, ${d.location.y}, ${d.location.z}` : 'unknown';
+  const v = d.vitals || {};
+  const tech = d.tech || {};
+  const rec = (tech.recipes||[]).map(i=>`<tr><td>${esc(i.name||i.key)}</td><td>${esc(i.state)}</td></tr>`).join('');
+  const tr = (d.tracks||[]).map(t=>`<tr><td>${esc(t.track)}</td><td>${esc(t.level)}</td><td>${esc(t.xp)}</td></tr>`).join('');
+  const rep = (d.reputation||[]).map(x=>`${esc(x.faction)} ${esc(x.amount)}`).join(', ') || 'none';
+  const rsp = (d.respawns||[]).map(x=>`${esc(x.name)}${x.map?' ('+esc(x.map)+')':''}`).join(', ') || 'none';
+  const jn = d.journey || {};
+  $('#cdetail').innerHTML = `
+    <p><b>${esc(p.name)}</b> · ${(d.mentors||[]).map(esc).join(', ') || 'no mentor'} ·
+       caste ${(d.castes||[]).map(esc).join(', ') || '?'} · ${esc(v.map||p.map||'')} ·
+       ${esc(p.life_state||'')} / ${esc(p.online_status)} · ${esc(p.platform||'')}</p>
+    <p>FLS <code>${esc(p.fls_id)}</code> · controller ${esc(p.controller_id)} · last login ${esc(p.last_login)}</p>
+    <p>Health ${esc(v.health)}/${esc(v.health_max)} · water ${esc(v.hydration)} · spice ${esc(v.spice)}
+       · heat ${esc(v.heat)} ${v.heatstroke?'<span class="bad">heatstroke</span>':''}
+       · Eyes of Ibad ${esc(v.eyes_of_ibad)}%</p>
+    <p>Intel points <b>${esc(tech.points)}</b> · recipes purchased ${tech.purchased||0} · not purchased ${tech.pending||0}
+       · trees ${ (d.schools||[]).map(esc).join(', ') || 'none listed' }</p>
+    <p>Tracked journey: ${esc(jn.journey||'none')} ${jn.landsraad?('· Landsraad '+esc(jn.landsraad)):''}</p>
+    <p>Faction standing: ${rep} · guilds: ${g} · NPE ${d.npe_done?'done':'not done'} · contracts completed ${d.contracts_done||0}</p>
+    <p>POIs: ${(d.pois||[]).map(esc).join(', ') || 'none'} · respawns: ${rsp}</p>
+    <p>Currency: ${cur}</p>
+    <p>Note: ${esc(d.note||'')}</p>
+    <p>Loc ${esc(loc)}</p>
+    <div class="grid">
+      <div><b>Specialization tracks</b>${tr?`<table><thead><tr><th>Track</th><th>Level</th><th>XP</th></tr></thead><tbody>${tr}</tbody></table>`:'<p class="muted">None stored yet (Dune has no single character level; Combat/Gathering/etc. fill in after XP lands).</p>'}
+          <b>Intel / recipes</b><table><thead><tr><th>Unlock</th><th></th></tr></thead><tbody>${rec||'<tr><td colspan=2>none</td></tr>'}</tbody></table></div>
+      <div><b>Inventory (template ids)</b><table><thead><tr><th>Item</th><th>Qty</th><th>Q</th><th>Inv</th></tr></thead><tbody>${inv||'<tr><td colspan=4>empty / pawn not linked</td></tr>'}</tbody></table>
+          <b>Blueprints / backups</b><table>${bases||'<tr><td>none</td></tr>'}</table>
+          <b>Landsraad</b><table>${lr||'<tr><td>none</td></tr>'}</table></div>
+    </div>`;
+}
+async function loadBackups(){
+  const d = await api('/api/backups');
+  const rows = (d.backups||[]).map(b => `<tr><td><label><input type="radio" name="bk" value="${esc(b.name)}"/> ${esc(b.name)}</label></td><td>${Math.round((b.bytes||0)/1024)} KiB</td><td>${b.mtime?new Date(b.mtime*1000).toLocaleString():''}</td></tr>`).join('');
+  $('#bups').innerHTML = `<table><thead><tr><th>File</th><th>Size</th><th>When</th></tr></thead><tbody>${rows||'<tr><td colspan=3>none</td></tr>'}</tbody></table>`;
+  document.querySelectorAll('input[name=bk]').forEach(r => r.onchange = ()=> { SEL_BACKUP = r.value; });
+}
+async function loadAudit(){
+  const d = await api('/api/audit');
+  const rows = (d.events||[]).map(e => `<tr><td>${esc(e.ts)}</td><td>${esc(e.action)}</td><td>${esc(e.player_id||'')}</td><td>${e.ok===false?'<span class="bad">no</span>':'ok'}</td></tr>`).join('');
+  $('#auditbox').innerHTML = `<table><thead><tr><th>Time</th><th>Action</th><th>Player</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan=4>empty</td></tr>'}</tbody></table>`;
+}
+async function loadSettings(){
+  const s = await api('/api/settings');
+  $('#inikeys').innerHTML = (s.keys||[]).map(k => `<div class="row"><label style="min-width:22em">${esc(k.file)} <code>${esc(k.key)}</code></label><input data-ini="${esc(k.file)}" data-key="${esc(k.key)}" value="${esc(k.value)}" style="min-width:12em"/></div>`).join('');
+  const c = await api('/api/config');
+  $('#wen').checked = !!(c.welcome||{}).enabled;
+  $('#witems').value = ((c.welcome||{}).items||[]).map(i => (i.item||'') + ',' + (i.qty||1)).join('\n');
+  $('#whhost').textContent = c.webhook_set ? ('set: ' + (c.webhook_host||'')) : 'not set';
+}
+document.body.addEventListener('click', async (e)=>{
+  const t = e.target;
+  if (t.dataset.op){
+    const body = {op:t.dataset.op};
+    if (t.dataset.confirm && !confirm(t.dataset.confirm)) return;
+    if (t.dataset.confirm) body.confirm = true;
+    out(await api('/api/action', body));
+    renderWorld(await api('/api/status'));
+    if (t.dataset.op==='backup') loadBackups();
+  }
+  if (t.dataset.log){
+    const d = await api('/api/logs?kind='+t.dataset.log);
+    $('#logbox').textContent = d.text || d.error || '';
+  }
+  if (t.dataset.use){ $('#tid').value = t.dataset.use; $('#cid').value = t.dataset.use; show('tools'); }
+  if (t.dataset.char){ show('char'); loadChar(t.dataset.char); }
+  if (t.dataset.kick){ out(await api('/api/action',{op:'kick',player_id:t.dataset.kick})); renderPlayers(); }
+  if (t.dataset.ban){
+    if(!confirm('Ban '+t.dataset.ban+'?')) return;
+    const hrs = parseFloat(($('#banhrs')||{}).value);
+    const body = {op:'ban', player_id:t.dataset.ban, reason:(($('#pnote')||{}).value)||'banned from admin panel'};
+    if (hrs>0) body.expires = Date.now()/1000 + hrs*3600;
+    out(await api('/api/action', body)); renderPlayers();
+  }
+  if (t.dataset.unban){ out(await api('/api/action',{op:'unban',player_id:t.dataset.unban})); renderPlayers(); }
+  if (t.dataset.wl){ out(await api('/api/action',{op:'whitelist-add',player_id:t.dataset.wl})); renderPlayers(); }
+});
+$('#pfilt') && ($('#pfilt').oninput = () => renderPlayers());
+$('#wlenable').onchange = async ()=> out(await api('/api/action',{op:'whitelist-enable', enabled: $('#wlenable').checked}));
+$('#bcast').onclick = async ()=> out(await api('/api/action',{op:'broadcast', title:$('#btitle').value, body:$('#bbody').value, duration: +$('#bdur').value||30}));
+$('#bshut').onclick = async ()=> { if(!confirm('10 minute restart countdown?')) return; out(await api('/api/action',{op:'broadcast', broadcast_type:'ServerShutdown', shutdown_type:'Restart', shutdown_duration:600, frequency:60, title:'Restart', body:$('#bbody').value||'World restart soon'})); };
+$('#bcancel').onclick = async ()=> out(await api('/api/action',{op:'broadcast', broadcast_type:'ServerShutdown', cancel:true}));
+$('#grant').onclick = async ()=> out(await api('/api/action',{op:'grant-item', player_id:$('#tid').value, item:$('#item').value, qty:+$('#qty').value||1}));
+$('#axp').onclick = async ()=> out(await api('/api/action',{op:'award-xp', player_id:$('#tid').value, xp:+$('#xp').value||0}));
+$('#ask').onclick = async ()=> out(await api('/api/action',{op:'skill-points', player_id:$('#tid').value, points:+$('#sp').value||0}));
+$('#water').onclick = async ()=> out(await api('/api/action',{op:'refill-water', player_id:$('#tid').value}));
+$('#sset').onclick = async ()=> out(await api('/api/action',{op:'skill-module', player_id:$('#tid').value, module:$('#smod').value, level:+$('#slev').value||1}));
+$('#locate').onclick = async ()=> { const d=await api('/api/action',{op:'locate', player_id:$('#tid').value}); if(d.location){ $('#x').value=d.location.x; $('#y').value=d.location.y; $('#z').value=d.location.z;} out(d); };
+$('#tp').onclick = async ()=> out(await api('/api/action',{op:'teleport', player_id:$('#tid').value, x:+$('#x').value, y:+$('#y').value, z:+$('#z').value}));
+$('#tpto').onclick = async ()=> out(await api('/api/action',{op:'teleport-to-player', player_id:$('#tid').value, target_id:$('#toid').value}));
+$('#spawnv').onclick = async ()=> { const [v,t]=$('#veh').value.split('|'); out(await api('/api/action',{op:'spawn-vehicle', player_id:$('#tid').value, vehicle:v, template:t, x:$('#x').value, y:$('#y').value, z:$('#z').value})); };
+$('#welcomenow').onclick = async ()=> out(await api('/api/action',{op:'welcome-now', player_id:$('#tid').value}));
+$('#wipeinv').onclick = async ()=> { if(!confirm('Wipe inventory?')) return; out(await api('/api/action',{op:'clean-inventory', player_id:$('#tid').value, confirm:true})); };
+$('#wipeprog').onclick = async ()=> { if(!confirm('Reset progression?')) return; out(await api('/api/action',{op:'reset-progression', player_id:$('#tid').value, confirm:true})); };
+$('#cload').onclick = async ()=> loadChar($('#cid').value);
+$('#rssave').onclick = async ()=> {
+  const v = $('#rsat').value; if(!v){ out('pick a time'); return; }
+  const at = new Date(v).getTime()/1000;
+  out(await api('/api/action',{op:'schedule-restart', at, lead:+$('#rslead').value||600}));
+  renderWorld(await api('/api/status'));
+};
+$('#rscancel').onclick = async ()=> { out(await api('/api/action',{op:'cancel-schedule'})); renderWorld(await api('/api/status')); };
+$('#rsdo').onclick = async ()=> {
+  if(!SEL_BACKUP){ out('select a backup'); return; }
+  out(await api('/api/action',{op:'restore-backup', name:SEL_BACKUP, confirm_text:$('#rstxt').value}));
+};
+$('#inisave').onclick = async ()=> {
+  const keys = [...document.querySelectorAll('#inikeys input')].map(i => ({file:i.dataset.ini, key:i.dataset.key, value:i.value}));
+  out(await api('/api/action',{op:'save-settings', keys}));
+};
+$('#iniapply').onclick = async ()=> { if(!confirm('Apply UserSettings to the battlegroup? Restart maps afterwards.')) return; out(await api('/api/action',{op:'apply-settings', confirm:true})); };
+$('#cfgsave').onclick = async ()=> {
+  const items = $('#witems').value.split(/\n/).map(l => l.trim()).filter(Boolean).map(l => { const [item,qty]=l.split(','); return {item:item.trim(), qty:+(qty||1)}; });
+  const body = {op:'save-config', welcome:{enabled:$('#wen').checked, items}};
+  if ($('#whurl').value.trim()) body.webhook_url = $('#whurl').value.trim();
+  out(await api('/api/action', body));
+};
+$('#rottok').onclick = async ()=> {
+  if(!confirm('Rotate token? You will need the new value immediately.')) return;
+  const d = await api('/api/action',{op:'rotate-token', confirm:true});
+  if (d.token){ $('#newtok').textContent = 'New token: '+d.token; sessionStorage.setItem('dune_admin_tok', d.token); }
+  out(d);
+};
+boot();
+</script>
+</body></html>

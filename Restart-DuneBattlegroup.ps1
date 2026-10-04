@@ -107,7 +107,12 @@ function Sync-DuneHelpers {
         "dune-fix-fls-dns.sh",
         "dune-set-advertise-ip.sh",
         "apply-k8s-hosts.sh",
-        "coredns-custom.yaml"
+        "coredns-custom.yaml",
+        "dune-admin.py",
+        "dune-admin.sh",
+        "dune-admin.service",
+        "dune-admin-lib.py",
+        "dune-admin.html"
     )
     $savedEap = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -124,6 +129,15 @@ function Sync-DuneHelpers {
     }
     $ErrorActionPreference = $savedEap
     Write-Log "helpers-synced"
+    $savedEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & wsl.exe -d $WslDistro -u root -- bash -lc "/home/dune/.dune/bin/dune-admin.sh --install"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "WARNING: dune-admin install/restart failed"
+    } else {
+        Write-Log "dune-admin listening on LAN TCP 18889"
+    }
+    $ErrorActionPreference = $savedEap
 }
 
 function Invoke-DuneMaintain {
