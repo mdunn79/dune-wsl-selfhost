@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import subprocess
+import threading
 import time
 import html as html_mod
 import urllib.error
@@ -15,7 +16,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 M = None
-CONFIG_FILE = NOTES_FILE = WELCOME_FILE = PRESENCE_FILE = DELETE_QUEUE_FILE = STATUS_DIR = None
+CONFIG_FILE = NOTES_FILE = WELCOME_FILE = PRESENCE_FILE = DELETE_QUEUE_FILE = STATUS_DIR = CATALOG_FILE = None
 SETUP_CFG = Path("/home/dune/.dune/download/scripts/setup/config")
 MANIFEST = Path("/home/dune/.dune/download/steamapps/appmanifest_4754530.acf")
 APPINFO = Path("/home/dune/.dune/last-appinfo.txt")
@@ -30,6 +31,9 @@ _MAP_READY: dict = {}
 _WAS_JOINABLE = False
 _WAS_MODIFYING = False
 _ONLINE_READY = False
+_WIKI_LOCK = threading.Lock()
+_WIKI_FETCHING = False
+_CATALOG_MEM = {"t": 0.0, "v": None}
 
 GM_GATES = {
     "grant-item": "grants",
@@ -274,7 +278,7 @@ SKILL_MODULES = [
 
 
 def bind(main) -> None:
-    global M, CONFIG_FILE, NOTES_FILE, WELCOME_FILE, PRESENCE_FILE, DELETE_QUEUE_FILE, STATUS_DIR
+    global M, CONFIG_FILE, NOTES_FILE, WELCOME_FILE, PRESENCE_FILE, DELETE_QUEUE_FILE, STATUS_DIR, CATALOG_FILE
     M = main
     CONFIG_FILE = M.DUNE / "admin-config.json"
     NOTES_FILE = M.DUNE / "admin-notes.json"
@@ -282,6 +286,7 @@ def bind(main) -> None:
     PRESENCE_FILE = M.DUNE / "admin-presence.json"
     DELETE_QUEUE_FILE = M.DUNE / "admin-delete-queue.json"
     STATUS_DIR = M.DUNE / "public-status"
+    CATALOG_FILE = M.DUNE / "admin-item-catalog.json"
     M.steam_ids = steam_ids
     M.host_health = host_health
     M.net_health = net_health
@@ -367,7 +372,262 @@ def restart_deferred_reason(online_n: int | None = None) -> str:
 
 
 def catalog() -> dict:
-    return {"items": CATALOG, "skills": SKILL_MODULES}
+    maybe_start_wiki_fetch(False)
+    out = dict(_merged_catalog())
+    meta = dict(out.get("meta") or {})
+    with _WIKI_LOCK:
+        meta["fetching"] = _WIKI_FETCHING
+    out["meta"] = meta
+    return out
+
+
+WIKI_ITEMS_URL = "https://api.awakening.wiki/items"
+_WIKI_SKIP_ID = re.compile(
+    r"(?:^Schematic_|_Schematic$|_Recipe$|^RCP_|^DA_GRP_|_Patent$)",
+    re.I,
+)
+
+
+def _wiki_skip(item_id: str, name: str, tags: str = "") -> bool:
+    fid = (item_id or "").strip()
+    nm = (name or "").strip()
+    if not fid:
+        return True
+    if _WIKI_SKIP_ID.search(fid):
+        return True
+    if nm.lower().endswith(" schematic"):
+        return True
+    if "Items.Schematics" in (tags or ""):
+        return True
+    if "Patent" in fid or "patent" in nm.lower():
+        return True
+    return False
+
+
+def _pretty_fname(fid: str) -> str:
+    s = re.sub(r"_+", " ", fid or "").strip()
+    s = re.sub(r"(?<!^)([A-Z])", r" \1", s)
+    return re.sub(r"\s+", " ", s).strip() or fid
+
+
+def _read_wiki_cache() -> dict:
+    if CATALOG_FILE is None:
+        return {}
+    d = M.load_json_file(CATALOG_FILE, {})
+    return d if isinstance(d, dict) else {}
+
+
+def _write_wiki_cache(d: dict) -> None:
+    if CATALOG_FILE is None:
+        return
+    M.save_json_file(CATALOG_FILE, d)
+
+
+def _local_buildid() -> str:
+    try:
+        return str((steam_ids(refresh=False) or {}).get("local") or "")
+    except Exception:
+        return ""
+
+
+def fetch_wiki_items() -> tuple[list[dict], str]:
+    rows: list[dict] = []
+    page = 1
+    ua = {"User-Agent": "DuneAdmin/1 (LAN self-host catalog cache)"}
+    last_err = ""
+    while page <= 20:
+        url = "%s?page=%d&limit=200" % (WIKI_ITEMS_URL, page)
+        req = urllib.request.Request(url, headers=ua)
+        try:
+            with urllib.request.urlopen(req, timeout=25) as r:
+                data = json.loads(r.read().decode("utf-8", errors="replace") or "{}")
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as e:
+            last_err = str(e)[:240]
+            break
+        chunk = data.get("list") if isinstance(data, dict) else None
+        if not isinstance(chunk, list):
+            last_err = "wiki list missing"
+            break
+        for it in chunk:
+            if not isinstance(it, dict):
+                continue
+            fid = str(it.get("item_id") or "").strip()
+            name = str(it.get("name") or "").strip()
+            tags = str(it.get("item_tags") or "")
+            if _wiki_skip(fid, name, tags):
+                continue
+            rows.append({"item_id": fid, "name": name or _pretty_fname(fid)})
+        info = data.get("pageInfo") if isinstance(data, dict) else {}
+        if isinstance(info, dict) and info.get("isLastPage"):
+            last_err = ""
+            break
+        if len(chunk) < 200:
+            last_err = ""
+            break
+        page += 1
+    else:
+        if not last_err:
+            last_err = "wiki page cap"
+    # de-dupe by item_id, keep first name
+    by_id: dict[str, dict] = {}
+    for it in rows:
+        by_id.setdefault(it["item_id"], it)
+    return list(by_id.values()), last_err
+
+
+def _do_wiki_fetch(force: bool = False) -> dict:
+    global _CATALOG_MEM
+    cur = _read_wiki_cache()
+    build = _local_buildid()
+    if (
+        not force
+        and isinstance(cur.get("items"), list)
+        and cur["items"]
+        and str(cur.get("buildid") or "") == build
+    ):
+        return {"ok": True, "out": "wiki cache already matches this depot", **_merged_catalog()}
+    items, err = fetch_wiki_items()
+    if not items:
+        msg = err or "wiki returned no grantable items"
+        return {"ok": False, "error": msg, **_merged_catalog()}
+    payload = {
+        "ts": time.time(),
+        "buildid": build,
+        "source": WIKI_ITEMS_URL,
+        "items": items,
+        "error": err,
+    }
+    _write_wiki_cache(payload)
+    _CATALOG_MEM["t"] = 0.0
+    out = _merged_catalog()
+    note = "cached %d wiki items" % len(items)
+    if err:
+        note += " (%s)" % err
+    return {"ok": True, "out": note, **out}
+
+
+def refresh_wiki_catalog(force: bool = False) -> dict:
+    global _WIKI_FETCHING
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        with _WIKI_LOCK:
+            busy = _WIKI_FETCHING
+        if not busy:
+            break
+        time.sleep(0.4)
+    with _WIKI_LOCK:
+        if _WIKI_FETCHING:
+            return {"ok": True, "out": "wiki fetch still running", **_merged_catalog()}
+        _WIKI_FETCHING = True
+    try:
+        return _do_wiki_fetch(force)
+    finally:
+        with _WIKI_LOCK:
+            _WIKI_FETCHING = False
+
+
+def maybe_start_wiki_fetch(force: bool = False) -> None:
+    global _WIKI_FETCHING
+    cur = _read_wiki_cache()
+    build = _local_buildid()
+    have = isinstance(cur.get("items"), list) and bool(cur.get("items"))
+    stale = bool(have and build and str(cur.get("buildid") or "") != build)
+    if have and not stale and not force:
+        return
+    with _WIKI_LOCK:
+        if _WIKI_FETCHING:
+            return
+        _WIKI_FETCHING = True
+    threading.Thread(target=_wiki_fetch_thread, args=(True,), daemon=True).start()
+
+
+def _wiki_fetch_thread(force: bool) -> None:
+    global _WIKI_FETCHING
+    try:
+        _do_wiki_fetch(force)
+    except Exception:
+        pass
+    finally:
+        with _WIKI_LOCK:
+            _WIKI_FETCHING = False
+
+
+def live_distinct_fnames() -> list[str]:
+    rows = _psql_rows(
+        "SELECT DISTINCT template_id::text FROM dune.items "
+        "WHERE template_id IS NOT NULL AND template_id::text <> '' "
+        "ORDER BY 1 LIMIT 8000"
+    )
+    out = []
+    for r in rows:
+        fid = (r[0] if r else "").strip()
+        if fid:
+            out.append(fid)
+    return out
+
+
+def _merged_catalog() -> dict:
+    now = time.time()
+    if _CATALOG_MEM["v"] and now - _CATALOG_MEM["t"] < 20:
+        return _CATALOG_MEM["v"]
+    by_id: dict[str, dict] = {}
+    wiki = _read_wiki_cache()
+    wiki_items = wiki.get("items") if isinstance(wiki.get("items"), list) else []
+    for disp, fid in CATALOG:
+        fid = str(fid)
+        by_id[fid] = {"name": str(disp), "item_id": fid, "source": "seed"}
+    wiki_n = 0
+    for it in wiki_items:
+        if not isinstance(it, dict):
+            continue
+        fid = str(it.get("item_id") or "").strip()
+        name = str(it.get("name") or "").strip()
+        if not fid:
+            continue
+        wiki_n += 1
+        if fid in by_id:
+            by_id[fid]["source"] = "seed+wiki" if by_id[fid]["source"] == "seed" else by_id[fid]["source"]
+            continue
+        by_id[fid] = {"name": name or _pretty_fname(fid), "item_id": fid, "source": "wiki"}
+    world = live_distinct_fnames()
+    world_n = 0
+    for fid in world:
+        world_n += 1
+        if fid in by_id:
+            src = by_id[fid]["source"]
+            if "world" not in src:
+                by_id[fid]["source"] = src + "+world"
+            continue
+        by_id[fid] = {"name": _pretty_fname(fid), "item_id": fid, "source": "world"}
+    items = sorted(by_id.values(), key=lambda x: (str(x.get("name") or "").lower(), x["item_id"]))
+    rows = [[it["name"], it["item_id"], it["source"]] for it in items]
+    out = {
+        "items": rows,
+        "skills": SKILL_MODULES,
+        "meta": {
+            "wiki": wiki_n,
+            "world": world_n,
+            "seed": len(CATALOG),
+            "total": len(rows),
+            "cached_ts": wiki.get("ts") or 0,
+            "buildid": wiki.get("buildid") or "",
+            "local_buildid": _local_buildid(),
+            "source": wiki.get("source") or "",
+            "error": wiki.get("error") or "",
+        },
+    }
+    _CATALOG_MEM["t"] = now
+    _CATALOG_MEM["v"] = out
+    return out
+
+
+def item_label_map() -> dict[str, str]:
+    d: dict[str, str] = {}
+    cat = _merged_catalog()
+    for row in cat.get("items") or []:
+        if isinstance(row, (list, tuple)) and len(row) >= 2:
+            d[str(row[1])] = str(row[0])
+    return d
 
 
 def _json_get(obj, *path, default=None):
@@ -1472,8 +1732,23 @@ def player_detail(pid: str) -> dict:
             "WHERE inv.actor_id::text = '%s' ORDER BY i.position_index LIMIT 250" % pawn
         ):
             inventory.append(
-                {"template_id": r[0], "qty": r[1] if len(r) > 1 else "1", "quality": r[2] if len(r) > 2 else "", "inv": r[3] if len(r) > 3 else ""}
+                {
+                    "template_id": r[0],
+                    "name": "",
+                    "qty": r[1] if len(r) > 1 else "1",
+                    "quality": r[2] if len(r) > 2 else "",
+                    "inv": r[3] if len(r) > 3 else "",
+                }
             )
+    if inventory:
+        try:
+            labels = item_label_map()
+            for it in inventory:
+                fid = str(it.get("template_id") or "")
+                it["name"] = labels.get(fid) or _pretty_fname(fid)
+        except Exception:
+            for it in inventory:
+                it["name"] = it.get("name") or str(it.get("template_id") or "")
     guilds = []
     if ctrl:
         for r in _psql_rows(
@@ -1825,6 +2100,21 @@ def extra_action(body: dict):
     op = str(body.get("op") or "")
     pid = M.resolve_player_id(str(body.get("player_id") or ""))
     confirm = bool(body.get("confirm"))
+
+    if op == "refresh-catalog":
+        maybe_start_wiki_fetch(True)
+        time.sleep(0.2)
+        cat = dict(_merged_catalog())
+        meta = dict(cat.get("meta") or {})
+        with _WIKI_LOCK:
+            meta["fetching"] = _WIKI_FETCHING
+        cat["meta"] = meta
+        return {"ok": True, "out": "wiki fetch started", **cat}
+    if op == "stack-edit":
+        return {
+            "ok": False,
+            "error": "SQL stack UPDATE is not offered. Maps own bags (same as mute DELETE). Grant more with AddItemToInventory.",
+        }
 
     if op == "check-update":
         # Refresh last-appinfo via steamcmd the same way maintain does.

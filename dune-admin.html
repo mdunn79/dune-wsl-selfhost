@@ -134,7 +134,7 @@ a{color:var(--acc)}
 </section>
 <section id="tools" class="tab" hidden>
   <div class="card">
-    <p class="muted">Target must be <b>online</b> for live GM commands. Click <b>Use</b> on your Players row (Funcom <code>name#digits</code> is fine). Grants send Funcom’s <code>accounts.user</code> FLS internally — do not paste the world HostId. Header <b>Dry-run</b> must be unchecked before grants go to the world. Locate can stay on Dry-run. Item search matches display names (Calibrated servok) as well as FNames.</p>
+    <p class="muted">Target must be <b>online</b> for live GM commands. Click <b>Use</b> on your Players row (Funcom <code>name#digits</code> is fine). Grants send Funcom’s <code>accounts.user</code> FLS internally — do not paste the world HostId. Header <b>Dry-run</b> must be unchecked before grants go to the world. Locate can stay on Dry-run. Item search uses the wiki cache plus FNames already in this world (Calibrated servok, Silicone block, or a raw FName).</p>
     <div class="row">
       <label>Confirm phrase <input id="gmphrase" placeholder="WIPE / RESET / DC / DELETE" style="width:14em"/></label>
     </div>
@@ -148,6 +148,16 @@ a{color:var(--acc)}
       <datalist id="items"></datalist>
       <label>Qty <input id="qty" type="number" value="1" style="width:5em"/></label>
       <button class="act" id="grant">Grant item</button>
+    </div>
+    <div class="card" style="margin:10px 0 0;padding:10px">
+      <h3 style="margin:0 0 6px">Item catalog</h3>
+      <p class="muted">awakening.wiki cache merged with <code>DISTINCT dune.items.template_id</code> on this world. Schematics / recipes / patents are filtered from the wiki dump. Not cooked paks. SQL stack edit is not offered — grant more instead.</p>
+      <div class="row">
+        <input id="catq" placeholder="Search silicone, servok, FName" style="min-width:18em"/>
+        <button class="act" id="catref">Refresh wiki cache</button>
+        <span id="catmeta" class="muted"></span>
+      </div>
+      <div id="cathits"></div>
     </div>
     <div class="row">
       <label>XP <input id="xp" type="number" value="1000" style="width:7em"/></label>
@@ -362,6 +372,41 @@ $('#lf').onsubmit = async (e)=>{
   if (!r.ok){ $('#le').textContent='Bad token'; return; }
   location.reload();
 };
+function fillCatalog(cat){
+  CATALOG = cat || {items:[], skills:[]};
+  const dl = $('#items'), sm = $('#smod');
+  if (dl){
+    dl.innerHTML = '';
+    (CATALOG.items||[]).forEach(i=>{
+      const o=document.createElement('option');
+      o.value = i[0]+' — '+i[1];
+      dl.appendChild(o);
+    });
+  }
+  if (sm && !sm.dataset.filled){
+    (CATALOG.skills||[]).forEach(s=>{ const o=document.createElement('option'); o.value=s; o.textContent=s; sm.appendChild(o); });
+    sm.dataset.filled = '1';
+  }
+  const m = CATALOG.meta || {};
+  if ($('#catmeta')){
+    const when = m.cached_ts ? ('cache '+fmtTs(m.cached_ts)) : 'no wiki cache yet';
+    $('#catmeta').textContent = (m.total||0)+' grantable · wiki '+(m.wiki||0)+' · world '+(m.world||0)+' · '+when+(m.fetching?' · fetching…':'');
+  }
+  renderCatHits();
+}
+function renderCatHits(){
+  const box = $('#cathits');
+  if (!box) return;
+  const q = (($('#catq')||{}).value||'').trim().toLowerCase();
+  let rows = CATALOG.items||[];
+  if (q) rows = rows.filter(i => String(i[0]||'').toLowerCase().includes(q) || String(i[1]||'').toLowerCase().includes(q));
+  const shown = rows.slice(0, 40);
+  box.innerHTML = `<table><thead><tr><th>Name</th><th>FName</th><th></th><th></th></tr></thead><tbody>${
+    shown.map(i=>`<tr><td>${esc(i[0])}</td><td><code>${esc(i[1])}</code></td><td class="muted">${esc(i[2]||'')}</td>
+      <td><button class="act" data-useitem="${esc(i[1])}" data-usename="${esc(i[0])}">Use</button></td></tr>`).join('')
+    || '<tr><td colspan=4 class="muted">no matches</td></tr>'
+  }</tbody></table>${rows.length>40?`<p class="muted">${rows.length} matches, showing 40. Narrow the search.</p>`:''}`;
+}
 async function boot(){
   const r = await fetch('/api/status', {headers:{'X-Admin-Token': token()}});
   if (r.status === 401){ $('#login').hidden=false; return; }
@@ -374,8 +419,17 @@ async function boot(){
     syncDry();
   }
   CATALOG = await api('/api/catalog');
-  (CATALOG.items||[]).forEach(i=>{ const o=document.createElement('option'); o.value=i[0]+' — '+i[1]; $('#items').appendChild(o); });
-  (CATALOG.skills||[]).forEach(s=>{ const o=document.createElement('option'); o.value=s; o.textContent=s; $('#smod').appendChild(o); });
+  fillCatalog(CATALOG);
+  if (!(CATALOG.meta||{}).wiki || (CATALOG.meta||{}).fetching){
+    (async ()=>{
+      for (let i=0;i<25;i++){
+        await new Promise(r=>setTimeout(r, 2000));
+        fillCatalog(await api('/api/catalog'));
+        const m = CATALOG.meta||{};
+        if (m.wiki>0 && !m.fetching) break;
+      }
+    })();
+  }
   renderWorld(await r.json());
   renderPlayers();
   loadBackups();
@@ -522,7 +576,11 @@ async function loadChar(id){
   const d = await api('/api/player?id='+encodeURIComponent(id));
   if (!d.ok){ $('#cdetail').innerHTML = `<p class="bad">${esc(d.error||'not found')}</p>`; return; }
   const p = d.player||{};
-  const inv = (d.inventory||[]).map(i=>`<tr><td>${esc(i.template_id)}</td><td>${esc(i.qty)}</td><td>${esc(i.quality)}</td><td>${esc(i.inv)}</td></tr>`).join('');
+  const inv = (d.inventory||[]).map(i=>`<tr>
+    <td>${esc(i.name||i.template_id)}<div class="muted">${esc(i.template_id)}</div></td>
+    <td>${esc(i.qty)}</td><td>${esc(i.quality)}</td><td>${esc(i.inv)}</td>
+    <td><button class="act" data-useitem="${esc(i.template_id)}" data-usename="${esc(i.name||i.template_id)}">Use</button></td>
+  </tr>`).join('');
   const g = (d.guilds||[]).map(x=>`${esc(x.name)} (${esc(x.role)})`).join(', ') || 'none';
   const cur = (d.currency||[]).map(x=>`${esc(x.id)}=${esc(x.balance)}`).join(', ') || 'none';
   const bases = (d.bases||[]).map(b=>`<tr><td>${esc(b.id)}</td><td>${esc(b.map||b.backup||'')}</td></tr>`).join('');
@@ -554,7 +612,8 @@ async function loadChar(id){
     <div class="grid">
       <div><b>Specialization tracks</b>${tr?`<table><thead><tr><th>Track</th><th>Level</th><th>XP</th></tr></thead><tbody>${tr}</tbody></table>`:'<p class="muted">None stored yet (Dune has no single character level; Combat/Gathering/etc. fill in after XP lands).</p>'}
           <b>Intel / recipes</b><table><thead><tr><th>Unlock</th><th></th></tr></thead><tbody>${rec||'<tr><td colspan=2>none</td></tr>'}</tbody></table></div>
-      <div><b>Inventory (template ids)</b><table><thead><tr><th>Item</th><th>Qty</th><th>Q</th><th>Inv</th></tr></thead><tbody>${inv||'<tr><td colspan=4>empty / pawn not linked</td></tr>'}</tbody></table>
+      <div><b>Inventory</b><p class="muted">Labels from wiki/seed/world. Qty is read-only — this panel will not SQL-UPDATE stacks.</p>
+          <table><thead><tr><th>Item</th><th>Qty</th><th>Q</th><th>Inv</th><th></th></tr></thead><tbody>${inv||'<tr><td colspan=5>empty / pawn not linked</td></tr>'}</tbody></table>
           <b>Blueprints / backups</b><table>${bases||'<tr><td>none</td></tr>'}</table>
           <b>Landsraad</b><table>${lr||'<tr><td>none</td></tr>'}</table></div>
     </div>`;
@@ -719,6 +778,11 @@ document.body.addEventListener('click', async (e)=>{
     $('#logbox').textContent = d.text || d.error || '';
   }
   if (t.dataset.use){ $('#tid').value = t.dataset.use; $('#cid').value = t.dataset.use; show('tools'); }
+  if (t.dataset.useitem){
+    const label = (t.dataset.usename||'') + (t.dataset.usename ? ' — ' : '') + t.dataset.useitem;
+    if ($('#item')) $('#item').value = label;
+    show('tools');
+  }
   if (t.dataset.char){ show('char'); loadChar(t.dataset.char); }
   if (t.dataset.qid){
     out(await api('/api/action',{op:'queue-delete', kind:t.dataset.qkind, id:t.dataset.qid, name:t.dataset.qname, map:t.dataset.qmap}));
@@ -745,6 +809,18 @@ $('#bcast').onclick = async ()=> out(await api('/api/action', gmBody({op:'broadc
 $('#bshut').onclick = async ()=> { if(!confirm('10 minute restart countdown?')) return; out(await api('/api/action', gmBody({op:'broadcast', broadcast_type:'ServerShutdown', shutdown_type:'Restart', shutdown_duration:600, frequency:60, title:'Restart', body:$('#bbody').value||'World restart soon'}))); };
 $('#bcancel').onclick = async ()=> out(await api('/api/action', gmBody({op:'broadcast', broadcast_type:'ServerShutdown', cancel:true})));
 $('#grant').onclick = async ()=> gm({op:'grant-item', player_id:$('#tid').value, item:$('#item').value, qty:+$('#qty').value||1});
+if ($('#catq')) $('#catq').oninput = renderCatHits;
+if ($('#catref')) $('#catref').onclick = async ()=> {
+  const d = await api('/api/action', {op:'refresh-catalog'});
+  out(d);
+  fillCatalog(d.items ? d : await api('/api/catalog'));
+  for (let i=0;i<25;i++){
+    await new Promise(r=>setTimeout(r, 2000));
+    fillCatalog(await api('/api/catalog'));
+    const m = CATALOG.meta||{};
+    if (m.wiki>0 && !m.fetching) break;
+  }
+};
 $('#axp').onclick = async ()=> gm({op:'award-xp', player_id:$('#tid').value, xp:+$('#xp').value||0});
 $('#ask').onclick = async ()=> gm({op:'skill-points', player_id:$('#tid').value, points:+$('#sp').value||0});
 $('#water').onclick = async ()=> gm({op:'refill-water', player_id:$('#tid').value});

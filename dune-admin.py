@@ -944,11 +944,21 @@ def resolve_item_name(name: str) -> str:
     fn = globals().get("catalog")
     items = fn().get("items", []) if callable(fn) else []
     low = raw.lower()
+    exact = []
+    contains = []
     for row in items:
         if not isinstance(row, (list, tuple)) or len(row) < 2:
             continue
-        if str(row[1]).lower() == low or str(row[0]).lower() == low:
-            return str(row[1])
+        disp, fid = str(row[0]), str(row[1])
+        if fid.lower() == low or disp.lower() == low:
+            exact.append(fid)
+        elif low and (low in disp.lower() or low in fid.lower()):
+            contains.append(fid)
+    if exact:
+        return exact[0]
+    uniq = list(dict.fromkeys(contains))
+    if len(uniq) == 1:
+        return uniq[0]
     return raw
 
 
