@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 M = None
-CONFIG_FILE = NOTES_FILE = WELCOME_FILE = None
+CONFIG_FILE = NOTES_FILE = WELCOME_FILE = PRESENCE_FILE = None
 SETUP_CFG = Path("/home/dune/.dune/download/scripts/setup/config")
 MANIFEST = Path("/home/dune/.dune/download/steamapps/appmanifest_4754530.acf")
 APPINFO = Path("/home/dune/.dune/last-appinfo.txt")
@@ -24,7 +24,10 @@ _HEALTH_CACHE = {"t": 0.0, "v": {}}
 _SETTINGS_META_CACHE = {"t": 0.0, "v": {}}
 _COL_CACHE: dict[str, set[str]] = {}
 _LAST_ONLINE: set = set()
+_LAST_NAMES: dict = {}
+_MAP_READY: dict = {}
 _WAS_JOINABLE = False
+_WAS_MODIFYING = False
 _ONLINE_READY = False
 
 GM_GATES = {
@@ -188,11 +191,12 @@ SKILL_MODULES = [
 
 
 def bind(main) -> None:
-    global M, CONFIG_FILE, NOTES_FILE, WELCOME_FILE
+    global M, CONFIG_FILE, NOTES_FILE, WELCOME_FILE, PRESENCE_FILE
     M = main
     CONFIG_FILE = M.DUNE / "admin-config.json"
     NOTES_FILE = M.DUNE / "admin-notes.json"
     WELCOME_FILE = M.DUNE / "admin-welcome.json"
+    PRESENCE_FILE = M.DUNE / "admin-presence.json"
     M.steam_ids = steam_ids
     M.host_health = host_health
     M.net_health = net_health
@@ -211,6 +215,7 @@ def bind(main) -> None:
     M.finish_gm = finish_gm
     M.stamp_op = stamp_op
     M.world_objects = world_objects
+    M.social_intel = social_intel
 
 
 def cfg() -> dict:
@@ -232,11 +237,45 @@ def cfg() -> dict:
             "spawn_vehicle": True,
         },
     )
+    d.setdefault(
+        "presence",
+        {
+            "discord_join": True,
+            "discord_leave": True,
+            "discord_maps": True,
+            "restart_defer_if_online": True,
+        },
+    )
     return d
 
 
 def save_cfg(d: dict) -> None:
     M.save_json_file(CONFIG_FILE, d)
+
+
+def presence_cfg() -> dict:
+    return cfg().get("presence") or {}
+
+
+def load_presence_store() -> dict:
+    d = M.load_json_file(PRESENCE_FILE, {})
+    if not isinstance(d, dict):
+        d = {}
+    fs = d.get("first_seen")
+    if not isinstance(fs, dict):
+        d["first_seen"] = {}
+    return d
+
+
+def restart_deferred_reason(online_n: int | None = None) -> str:
+    if not presence_cfg().get("restart_defer_if_online", True):
+        return ""
+    if online_n is None:
+        players, _e = M.load_players()
+        online_n = sum(1 for p in players if p.get("online") and p.get("player_id"))
+    if online_n:
+        return "restart deferred: %d player(s) online (Settings → defer if anyone is online)" % online_n
+    return ""
 
 
 def catalog() -> dict:
@@ -284,6 +323,278 @@ def _load_json_col(sql: str):
         return {}
 
 
+def battlegroup_overview() -> dict:
+    n = M.ns()
+    out = {
+        "phase": "",
+        "server_group_phase": "",
+        "gateway_phase": "",
+        "modifying": False,
+        "servers": [],
+    }
+    if not n:
+        return out
+    data = M.kubectl_json(["get", "battlegroup", "-n", n])
+    if not isinstance(data, dict):
+        return out
+    items = data.get("items") or ([data] if data.get("kind") else [])
+    if not items:
+        return out
+    st = items[0].get("status") or {}
+    out["phase"] = str(st.get("phase") or "")
+    out["server_group_phase"] = str(st.get("serverGroupPhase") or "")
+    gw = (st.get("utilities") or {}).get("serverGateway") if isinstance(st.get("utilities"), dict) else {}
+    if isinstance(gw, dict):
+        out["gateway_phase"] = str(gw.get("phase") or "")
+    servers = st.get("servers") if isinstance(st.get("servers"), list) else []
+    for s in servers:
+        if not isinstance(s, dict):
+            continue
+        rec = {
+            "map": str(s.get("partitionMap") or ""),
+            "phase": str(s.get("phase") or ""),
+            "ready": bool(s.get("ready")),
+            "restarts": s.get("restarts") or 0,
+        }
+        out["servers"].append(rec)
+        blob = (rec["phase"] + " " + rec["map"]).lower()
+        if "modif" in blob:
+            out["modifying"] = True
+    for extra in (out["phase"], out["server_group_phase"], out["gateway_phase"]):
+        if "modif" in extra.lower():
+            out["modifying"] = True
+    return out
+
+
+def overview_map() -> dict:
+    """Pawn XY plus overmap dots. SELECT only."""
+    hid = (M.world_host_id() or "").replace("'", "")
+    user_sql = (
+        "CASE WHEN upper(acc.\"user\"::text) = '%s' THEN acc.funcom_id::text ELSE "
+        "COALESCE(NULLIF(acc.\"user\"::text,''), acc.funcom_id::text, '') END" % hid
+        if hid
+        else 'COALESCE(NULLIF(acc."user"::text,\'\'), acc.funcom_id::text, \'\')'
+    )
+    dots = []
+    for r in _psql_rows(
+        "SELECT COALESCE(ps.character_name,''), %s, "
+        "LOWER(COALESCE(ps.online_status::text,'')), act.transform::text, "
+        "COALESCE(act.map,'') "
+        "FROM dune.player_state ps "
+        "JOIN dune.actors act ON act.id = ps.player_pawn_id "
+        "LEFT JOIN dune.accounts acc ON acc.id = ps.account_id "
+        "WHERE act.transform IS NOT NULL LIMIT 200" % user_sql
+    ):
+        loc = M._parse_xyz(r[3] if len(r) > 3 else "")
+        if not loc:
+            continue
+        mmap = (r[4] if len(r) > 4 else "") or "Hagga"
+        dots.append(
+            {
+                "name": r[0] if r else "",
+                "player_id": r[1] if len(r) > 1 else "",
+                "online": (r[2] if len(r) > 2 else "") in ("online", "1", "t", "true"),
+                "x": loc["x"],
+                "y": loc["y"],
+                "z": loc["z"],
+                "map": mmap,
+                "source": "pawn",
+            }
+        )
+    for r in _psql_rows(
+        "SELECT COALESCE(ps.character_name,''), COALESCE(op.player_id::text,''), "
+        "op.overmap_location::text "
+        "FROM dune.overmap_players op "
+        "LEFT JOIN dune.player_state ps ON ps.player_controller_id::text = op.player_id::text "
+        "LIMIT 50"
+    ):
+        loc = M._parse_xyz(r[2] if len(r) > 2 else "")
+        if not loc:
+            continue
+        dots.append(
+            {
+                "name": r[0] if r else "",
+                "player_id": r[1] if len(r) > 1 else "",
+                "online": True,
+                "x": loc["x"],
+                "y": loc["y"],
+                "z": loc["z"],
+                "map": "Overmap",
+                "source": "overmap",
+            }
+        )
+    return {"dots": dots, "count": len(dots)}
+
+
+def social_intel() -> dict:
+    """Read-only CHOAM / guilds / Landsraad / Solari. SELECT only."""
+    guilds = []
+    for r in _psql_rows(
+        "SELECT g.guild_id::text, COALESCE(g.guild_name,''), COALESCE(g.guild_faction::text,''), "
+        "COALESCE(g.guild_description,''), COUNT(m.player_id)::text "
+        "FROM dune.guilds g LEFT JOIN dune.guild_members m ON m.guild_id = g.guild_id "
+        "GROUP BY g.guild_id, g.guild_name, g.guild_faction, g.guild_description "
+        "ORDER BY g.guild_name LIMIT 50"
+    ):
+        guilds.append(
+            {
+                "id": r[0],
+                "name": r[1] if len(r) > 1 else "",
+                "faction": r[2] if len(r) > 2 else "",
+                "description": r[3] if len(r) > 3 else "",
+                "members": r[4] if len(r) > 4 else "0",
+            }
+        )
+    members = []
+    for r in _psql_rows(
+        "SELECT COALESCE(g.guild_name,''), COALESCE(ps.character_name, m.player_id::text), "
+        "COALESCE(m.role_id::text,'') "
+        "FROM dune.guild_members m "
+        "JOIN dune.guilds g ON g.guild_id = m.guild_id "
+        "LEFT JOIN dune.player_state ps ON ps.player_controller_id = m.player_id "
+        "ORDER BY 1, 2 LIMIT 200"
+    ):
+        members.append({"guild": r[0], "name": r[1] if len(r) > 1 else "", "role": r[2] if len(r) > 2 else ""})
+    invites = []
+    icols = table_cols("guild_invites")
+    igid = _ident(_first_col(icols, ("guild_id",)))
+    ipid = _ident(_first_col(icols, ("player_id", "invitee_id", "invited_player_id")))
+    isid = _ident(_first_col(icols, ("sender_player_id", "inviter_id", "sender_id")))
+    if igid and ipid:
+        from_sql = ("COALESCE(sp.character_name, i.%s::text)" % isid) if isid else "''"
+        sender_join = (
+            "LEFT JOIN dune.player_state sp ON sp.player_controller_id = i.%s" % isid if isid else ""
+        )
+        for r in _psql_rows(
+            "SELECT COALESCE(g.guild_name,''), COALESCE(ps.character_name, i.%s::text), %s "
+            "FROM dune.guild_invites i "
+            "LEFT JOIN dune.guilds g ON g.guild_id = i.%s "
+            "LEFT JOIN dune.player_state ps ON ps.player_controller_id = i.%s "
+            "%s LIMIT 50" % (ipid, from_sql, igid, ipid, sender_join)
+        ):
+            invites.append({"guild": r[0], "player": r[1] if len(r) > 1 else "", "from": r[2] if len(r) > 2 else ""})
+    listings = []
+    for r in _psql_rows(
+        "SELECT COALESCE(o.template_id,''), COALESCE(o.item_price::text,''), "
+        "CASE WHEN o.is_npc_order THEN 'npc' ELSE 'player' END, "
+        "COALESCE(ps.character_name, o.owner_id::text), COALESCE(o.expiration_time::text,''), "
+        "COALESCE(x.exchange_name,'') "
+        "FROM dune.dune_exchange_orders o "
+        "LEFT JOIN dune.player_state ps ON ps.player_controller_id = o.owner_id "
+        "LEFT JOIN dune.dune_exchanges x ON x.id = o.exchange_id "
+        "ORDER BY o.id DESC LIMIT 200"
+    ):
+        listings.append(
+            {
+                "item": r[0],
+                "price": r[1] if len(r) > 1 else "",
+                "seller_kind": r[2] if len(r) > 2 else "",
+                "seller": r[3] if len(r) > 3 else "",
+                "expires": r[4] if len(r) > 4 else "",
+                "exchange": r[5] if len(r) > 5 else "",
+            }
+        )
+    exchanges = []
+    for r in _psql_rows("SELECT id::text, COALESCE(exchange_name,'') FROM dune.dune_exchanges ORDER BY id"):
+        exchanges.append({"id": r[0], "name": r[1] if len(r) > 1 else ""})
+    terms = []
+    tcols = table_cols("landsraad_decree_term")
+    tidc = _ident(_first_col(tcols, ("term_id", "id")))
+    startc = _ident(_first_col(tcols, ("start_time", "start", "begins_at")))
+    endc = _ident(_first_col(tcols, ("end_time", "end", "expires_at")))
+    reignc = _ident(_first_col(tcols, ("reigning_faction_id", "reigning_faction")))
+    actc = _ident(_first_col(tcols, ("active_decree_id", "active_decree")))
+    winc = _ident(_first_col(tcols, ("winning_faction_id", "winning_faction")))
+    elc = _ident(_first_col(tcols, ("elected_decree_id", "elected_decree")))
+    if tidc and startc:
+        for r in _psql_rows(
+            "SELECT %s::text, COALESCE(%s::text,''), COALESCE(%s::text,''), "
+            "COALESCE(%s::text,''), COALESCE(%s::text,''), COALESCE(%s::text,''), COALESCE(%s::text,'') "
+            "FROM dune.landsraad_decree_term ORDER BY %s DESC LIMIT 4"
+            % (
+                tidc,
+                startc or "NULL",
+                endc or "NULL",
+                reignc or "NULL",
+                actc or "NULL",
+                winc or "NULL",
+                elc or "NULL",
+                startc,
+            )
+        ):
+            terms.append(
+                {
+                    "id": r[0],
+                    "start": r[1] if len(r) > 1 else "",
+                    "end": r[2] if len(r) > 2 else "",
+                    "reigning": r[3] if len(r) > 3 else "",
+                    "active_decree": r[4] if len(r) > 4 else "",
+                    "winning": r[5] if len(r) > 5 else "",
+                    "elected_decree": r[6] if len(r) > 6 else "",
+                }
+            )
+    decrees = []
+    for r in _psql_rows(
+        "SELECT id::text, COALESCE(decree_name,''), CASE WHEN disabled THEN 'off' ELSE 'on' END "
+        "FROM dune.landsraad_decrees ORDER BY id LIMIT 40"
+    ):
+        decrees.append({"id": r[0], "name": r[1] if len(r) > 1 else "", "enabled": r[2] if len(r) > 2 else ""})
+    tasks = []
+    term_id = terms[0]["id"] if terms else ""
+    if term_id:
+        for r in _psql_rows(
+            "SELECT COALESCE(house_name,''), COALESCE(goal_amount::text,''), "
+            "CASE WHEN completed THEN 'done' ELSE 'open' END, COALESCE(winning_faction_id::text,'') "
+            "FROM dune.landsraad_tasks WHERE term_id::text = '%s' ORDER BY board_index LIMIT 40"
+            % term_id.replace("'", "")
+        ):
+            tasks.append(
+                {
+                    "house": r[0],
+                    "goal": r[1] if len(r) > 1 else "",
+                    "state": r[2] if len(r) > 2 else "",
+                    "winning": r[3] if len(r) > 3 else "",
+                }
+            )
+    solari = {}
+    for r in _psql_rows(
+        "SELECT COALESCE(ps.character_name,'(pawn)'), COALESCE(SUM(i.stack_size),0)::text "
+        "FROM dune.items i "
+        "JOIN dune.inventories inv ON inv.id = i.inventory_id "
+        "JOIN dune.player_state ps ON ps.player_pawn_id = inv.actor_id "
+        "WHERE i.template_id = 'SolarisCoin' "
+        "GROUP BY 1 LIMIT 80"
+    ):
+        rec = solari.setdefault(r[0], {"name": r[0], "carried": "0", "bank": "0"})
+        rec["carried"] = r[1] if len(r) > 1 else "0"
+    ucols = table_cols("dune_exchange_users")
+    ownc = _ident(_first_col(ucols, ("owner_id", "player_id", "user_id")))
+    balc = _ident(_first_col(ucols, ("solari_balance", "solari", "balance", "currency_balance", "amount")))
+    if ownc and balc:
+        join_on = "ps.player_controller_id" if "player_controller_id" in table_cols("player_state") else "ps.id"
+        for r in _psql_rows(
+            "SELECT COALESCE(ps.character_name, u.%s::text), COALESCE(u.%s::text,'0') "
+            "FROM dune.dune_exchange_users u "
+            "LEFT JOIN dune.player_state ps ON %s = u.%s "
+            "LIMIT 80" % (ownc, balc, join_on, ownc)
+        ):
+            rec = solari.setdefault(r[0], {"name": r[0], "carried": "0", "bank": "0"})
+            rec["bank"] = r[1] if len(r) > 1 else "0"
+    return {
+        "ok": True,
+        "guilds": guilds,
+        "members": members,
+        "invites": invites,
+        "listings": listings,
+        "exchanges": exchanges,
+        "landsraad_terms": terms,
+        "decrees": decrees,
+        "tasks": tasks,
+        "solari": list(solari.values()),
+        "listing_count": len(listings),
+    }
+
+
 def enrich_status(payload: dict) -> dict:
     payload["steam"] = steam_ids(refresh=False)
     payload["health"] = host_health()
@@ -291,6 +602,9 @@ def enrich_status(payload: dict) -> dict:
     payload["schedule"] = cfg().get("schedule")
     payload["welcome_on"] = bool((cfg().get("welcome") or {}).get("enabled"))
     payload["settings_meta"] = settings_meta()
+    payload["presence"] = cfg().get("presence") or {}
+    payload["battlegroup"] = battlegroup_overview()
+    payload["overview"] = overview_map()
     return payload
 
 
@@ -312,6 +626,7 @@ def enrich_players(players: list) -> list:
         by_ban[str(b.get("player_id", "")).upper()] = b
     if changed:
         M.save_json_file(M.BANS_FILE, live_bans)
+    firsts = (load_presence_store().get("first_seen") or {})
     for p in players:
         pid = (p.get("player_id") or "")
         n = notes.get(pid) or notes.get(pid.upper()) or {}
@@ -319,6 +634,8 @@ def enrich_players(players: list) -> list:
         b = by_ban.get(pid.upper()) or {}
         p["ban_expires"] = b.get("expires")
         p["ban_reason"] = b.get("reason", "")
+        fs = firsts.get(pid) or firsts.get(pid.upper()) or {}
+        p["first_seen"] = fs.get("ts") if isinstance(fs, dict) else ""
     return players
 
 
@@ -356,7 +673,15 @@ def steam_ids(refresh: bool = False) -> dict:
         m = re.search(r'"branches"\s*\{\s*"public"\s*\{[^}]*?"buildid"\s+"(\d+)"', t, re.S)
         public = m.group(1) if m else ""
     newer = bool(local and public and public != local and public.isdigit() and local.isdigit() and int(public) > int(local))
-    return {"local": local, "public": public, "update_available": newer}
+    checked = APPINFO.stat().st_mtime if APPINFO.is_file() else 0
+    installed = MANIFEST.stat().st_mtime if MANIFEST.is_file() else 0
+    return {
+        "local": local,
+        "public": public,
+        "update_available": newer,
+        "checked_ts": checked,
+        "installed_ts": installed,
+    }
 
 
 def host_health() -> dict:
@@ -700,6 +1025,10 @@ def prepare_gm(body: dict):
         if pid:
             preview["player"] = player_row(pid) or {"player_id": pid}
         return preview
+    if op == "restart":
+        deferred = restart_deferred_reason()
+        if deferred:
+            return {"ok": False, "error": deferred, "dry_run": dry}
     return None
 
 
@@ -1059,16 +1388,30 @@ def player_detail(pid: str) -> dict:
         ):
             guilds.append({"name": r[0], "faction": r[1] if len(r) > 1 else "", "role": r[2] if len(r) > 2 else ""})
     currency = []
+    bank_solari = "0"
+    carried_solari = "0"
+    for it in inventory:
+        if str(it.get("template_id") or "") == "SolarisCoin":
+            try:
+                carried_solari = str(int(carried_solari) + int(it.get("qty") or 0))
+            except (TypeError, ValueError):
+                pass
     if ctrl:
         for r in _psql_rows(
             "SELECT currency_id::text, balance::text FROM dune.player_virtual_currency_balances "
             "WHERE player_controller_id::text = '%s'" % ctrl
         ):
             currency.append({"id": r[0], "balance": r[1] if len(r) > 1 else ""})
-        for r in _psql_rows(
-            "SELECT solari_balance::text FROM dune.dune_exchange_users WHERE owner_id::text = '%s'" % ctrl
-        ):
-            currency.append({"id": "solari_exchange", "balance": r[0]})
+        ucols = table_cols("dune_exchange_users")
+        ownc = _ident(_first_col(ucols, ("owner_id", "player_id", "user_id")))
+        balc = _ident(_first_col(ucols, ("solari_balance", "solari", "balance", "currency_balance", "amount")))
+        if ownc and balc and table_cols("dune_exchange_users"):
+            for r in _psql_rows(
+                "SELECT COALESCE(%s::text,'0') FROM dune.dune_exchange_users WHERE %s::text = '%s'"
+                % (balc, ownc, ctrl)
+            ):
+                bank_solari = r[0] if r else "0"
+                currency.append({"id": "solari_bank", "balance": bank_solari})
     bases = []
     if ctrl:
         for r in _psql_rows(
@@ -1211,12 +1554,17 @@ def player_detail(pid: str) -> dict:
             base["map"] = pawn_map
     notes = M.load_json_file(NOTES_FILE, {})
     note = notes.get(pid) or notes.get((base.get("fls_id") or "").upper()) or {}
+    firsts = load_presence_store().get("first_seen") or {}
+    fs = firsts.get(pid) or firsts.get(base.get("fls_id") or "") or firsts.get((base.get("player_id") or "")) or {}
+    first_seen = fs.get("ts") if isinstance(fs, dict) else ""
     return {
         "ok": True,
         "player": base,
         "inventory": inventory,
         "guilds": guilds,
         "currency": currency,
+        "solari": {"carried": carried_solari, "bank": bank_solari},
+        "first_seen": first_seen,
         "bases": bases,
         "landsraad": landsraad,
         "totems": totems,
@@ -1269,6 +1617,7 @@ def read_admin_config() -> dict:
         "gates": c.get("gates") or {},
         "last_apply_ts": c.get("last_apply_ts"),
         "last_restart_ts": c.get("last_restart_ts"),
+        "presence": c.get("presence") or {},
     }
 
 
@@ -1358,13 +1707,7 @@ def extra_action(body: dict):
         c = cfg()
         c["schedule"] = None
         save_cfg(c)
-        ok, msg = M.mq_publish(
-            {
-                "ServerCommand": "ServiceBroadcast",
-                "BroadcastType": "ServerShutdown",
-                "ShouldCancel": True,
-            }
-        )
+        ok, msg = M.mq_publish(M.service_broadcast_fields(cancel=True, title="Restart", body="Cancelled"))
         return {"ok": True, "out": "cleared; cancel-broadcast " + msg}
     if op == "rotate-token":
         if not confirm:
@@ -1401,6 +1744,12 @@ def extra_action(body: dict):
                 if k in body["gates"]:
                     g[k] = bool(body["gates"][k])
             c["gates"] = g
+        if "presence" in body and isinstance(body.get("presence"), dict):
+            p = dict(c.get("presence") or {})
+            for k in ("discord_join", "discord_leave", "discord_maps", "restart_defer_if_online"):
+                if k in body["presence"]:
+                    p[k] = bool(body["presence"][k])
+            c["presence"] = p
         save_cfg(c)
         return {"ok": True, "out": "saved"}
     if op == "save-settings":
@@ -1482,28 +1831,68 @@ def grant_welcome(pid: str, force: bool = False) -> dict:
 
 
 def tick_extras() -> None:
-    global _LAST_ONLINE, _WAS_JOINABLE, _ONLINE_READY
+    global _LAST_ONLINE, _LAST_NAMES, _MAP_READY, _WAS_JOINABLE, _WAS_MODIFYING, _ONLINE_READY
     try:
         ip = M.lan_ip()
         st = M.world_status(ip)
     except Exception:
         return
+    pres = presence_cfg()
     joinable = bool(st.get("joinable"))
-    if _WAS_JOINABLE and not joinable:
-        webhook("map_down", "World not joinable: " + ", ".join(st.get("join_notes") or []))
+    maps = st.get("maps") or []
+    bg = st.get("battlegroup") or {}
+    modifying = bool(bg.get("modifying"))
+    if pres.get("discord_maps", True) and _ONLINE_READY:
+        for m in maps:
+            kind = str(m.get("kind") or "")
+            ready = bool(m.get("ready"))
+            prev = _MAP_READY.get(kind)
+            if prev is True and not ready:
+                webhook(
+                    "map_down",
+                    "%s not Ready (%s %s)" % (kind, m.get("phase") or "", m.get("ready_col") or ""),
+                )
+            if kind:
+                _MAP_READY[kind] = ready
+        if _WAS_MODIFYING is False and modifying:
+            webhook("map_down", "Gateway / battlegroup Modifying")
+        if _WAS_JOINABLE and not joinable:
+            survival_ok = bool(st.get("survival_ok"))
+            overmap_ok = bool(st.get("overmap_ok"))
+            if survival_ok and overmap_ok:
+                webhook("map_down", "World not joinable: " + ", ".join(st.get("join_notes") or []))
     _WAS_JOINABLE = joinable
+    _WAS_MODIFYING = modifying
     players, _e = M.load_players()
     online = {p.get("player_id") for p in players if p.get("online") and p.get("player_id")}
+    names = {p.get("player_id"): p.get("name") or "" for p in players if p.get("player_id")}
+    store = load_presence_store()
+    firsts = store.setdefault("first_seen", {})
+    now = time.time()
+    store_changed = False
+    for p in players:
+        pid = p.get("player_id")
+        if not pid:
+            continue
+        if pid not in firsts:
+            firsts[pid] = {"ts": now, "name": p.get("name") or ""}
+            store_changed = True
+    if store_changed:
+        M.save_json_file(PRESENCE_FILE, store)
     if _ONLINE_READY:
         for pid in sorted(online - _LAST_ONLINE):
-            name = next((p.get("name") for p in players if p.get("player_id") == pid), "")
-            webhook("join", "%s %s" % (name or "player", pid[:12]))
+            name = names.get(pid) or _LAST_NAMES.get(pid) or ""
+            if pres.get("discord_join", True):
+                webhook("join", "%s %s" % (name or "player", pid[:12]))
             w = cfg().get("welcome") or {}
             if w.get("enabled") and w.get("items"):
                 grant_welcome(pid)
         for pid in sorted(_LAST_ONLINE - online):
-            webhook("leave", pid[:12])
+            name = _LAST_NAMES.get(pid) or ""
+            if pres.get("discord_leave", True):
+                webhook("leave", "%s %s" % (name or "player", pid[:12]))
     _LAST_ONLINE = online
+    _LAST_NAMES = names
     _ONLINE_READY = True
     sch = cfg().get("schedule")
     if not isinstance(sch, dict):
@@ -1514,16 +1903,17 @@ def tick_extras() -> None:
     if at <= 0:
         return
     if not sch.get("announced") and now >= at - lead:
+        remain = max(30, int(at - now))
         M.mq_publish(
-            {
-                "ServerCommand": "ServiceBroadcast",
-                "BroadcastType": "ServerShutdown",
-                "ShutdownType": "Restart",
-                "ShutdownDuration": max(30, int(at - now)),
-                "BroadcastFrequency": 60,
-                "Title": "Restart",
-                "Body": "World restart scheduled from admin panel",
-            }
+            M.service_broadcast_fields(
+                kind="ServerShutdown",
+                title="Restart",
+                body="World restart scheduled from admin panel",
+                shutdown_type="Restart",
+                shutdown_duration=remain,
+                frequency=60,
+                at=int(at),
+            )
         )
         sch["announced"] = True
         c = cfg()
@@ -1531,8 +1921,19 @@ def tick_extras() -> None:
         save_cfg(c)
         webhook("restart", "Restart countdown started")
     if now >= at:
+        deferred = restart_deferred_reason(len(online))
+        if deferred:
+            if not sch.get("deferred"):
+                webhook("restart", deferred)
+                sch["deferred"] = True
+                c = cfg()
+                c["schedule"] = sch
+                save_cfg(c)
+            return
         webhook("restart", "Restarting battlegroup now")
         M.battlegroup("restart")
         c = cfg()
         c["schedule"] = None
+        c["last_restart_ts"] = time.time()
         save_cfg(c)
+        _SETTINGS_META_CACHE["t"] = 0.0

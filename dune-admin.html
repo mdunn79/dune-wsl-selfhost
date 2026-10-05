@@ -37,6 +37,7 @@ a{color:var(--acc)}
 .warn{background:#3a201c;border:1px solid var(--bad);padding:8px 10px;border-radius:6px;margin:0 0 10px}
 .notice{background:#2a261f;border:1px solid var(--acc);padding:8px 10px;border-radius:6px;margin:0 0 10px}
 .ini-drift input{border-color:var(--acc)}
+.ovsvg{background:#0e0d0b;border:1px solid #2a261f;border-radius:6px;display:block;width:100%;max-width:440px;height:260px}
 </style>
 </head>
 <body>
@@ -59,6 +60,7 @@ a{color:var(--acc)}
     <button data-tab="tools">Tools</button>
     <button data-tab="bases">Bases</button>
     <button data-tab="vehicles">Vehicles</button>
+    <button data-tab="social">Social</button>
     <button data-tab="settings">Settings</button>
     <button data-tab="logs">Logs</button>
     <button data-tab="audit">Audit</button>
@@ -115,7 +117,7 @@ a{color:var(--acc)}
       <button class="act" id="bshut">Restart countdown (10 min)</button>
       <button class="act" id="bcancel">Cancel shutdown notice</button>
     </p>
-    <p class="muted">Broadcast uses the header <b>Dry-run</b> checkbox (next to Auto-refresh). Uncheck it to send in-game. Leave it on while you are only testing.</p>
+    <p class="muted">Broadcast is a <b>title-card popup</b> in-game (not chat), ~30s, top of the HUD. Dry-run must be unchecked. Restart countdown is a shutdown warning — skip it unless you mean that.</p>
   </div>
   <div class="card">
     <label><input type="checkbox" id="wlenable"/> Enforce whitelist (kick anyone not listed)</label>
@@ -206,6 +208,26 @@ a{color:var(--acc)}
     <div id="vehlist">Open this tab to load.</div>
   </div>
 </section>
+<section id="social" class="tab" hidden>
+  <div class="card">
+    <h3 style="margin:0 0 8px">CHOAM</h3>
+    <p class="muted">Read-only exchange listings. Empty is normal until someone (or an NPC vendor) posts an order.</p>
+    <div id="choamlist">Open this tab to load.</div>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 8px">Guilds</h3>
+    <div id="guildlist">Open this tab to load.</div>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 8px">Landsraad</h3>
+    <div id="lrlist">Open this tab to load.</div>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 8px">Solari</h3>
+    <p class="muted">Carried is <code>SolarisCoin</code> on the pawn. Bank is CHOAM exchange balance when that row exists.</p>
+    <div id="solarilist">Open this tab to load.</div>
+  </div>
+</section>
 <section id="settings" class="tab" hidden>
   <div class="card">
     <h3 style="margin:0 0 8px">Rates / world INI</h3>
@@ -228,8 +250,15 @@ a{color:var(--acc)}
       <label>Discord webhook <input id="whurl" type="password" placeholder="https://discord.com/api/webhooks/…" style="min-width:22em"/></label>
       <span class="muted" id="whhost"></span>
     </div>
+    <p class="muted">Discord posts join/leave and maps that leave Ready. Uncheck to silence a kind. Restart defer postpones World Restart and the scheduled restart while anyone is online.</p>
+    <div class="row">
+      <label><input type="checkbox" id="pjoin" checked/> Discord join</label>
+      <label><input type="checkbox" id="pleave" checked/> Discord leave</label>
+      <label><input type="checkbox" id="pmaps" checked/> Discord maps not Ready</label>
+      <label><input type="checkbox" id="pdefer" checked/> Defer restart if anyone is online</label>
+    </div>
     <p class="row">
-      <button class="act" id="cfgsave">Save kit / webhook</button>
+      <button class="act" id="cfgsave">Save kit / webhook / presence</button>
       <button class="act bad" id="rottok">Rotate admin token</button>
     </p>
     <p id="newtok" class="ok"></p>
@@ -275,6 +304,7 @@ function show(id){
   if (id==='world') loadBackups();
   if (id==='bases') loadBases();
   if (id==='vehicles') loadVehicles();
+  if (id==='social') loadSocial();
 }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => show(b.dataset.tab));
 function token(){ return sessionStorage.getItem('dune_admin_tok') || ''; }
@@ -348,12 +378,38 @@ async function refresh(){
   if (!$('#players').hidden) renderPlayers();
   if ($('#bases') && !$('#bases').hidden) loadBases();
   if ($('#vehicles') && !$('#vehicles').hidden) loadVehicles();
+  if ($('#social') && !$('#social').hidden) loadSocial();
+}
+function svgMap(title, dots){
+  if (!dots.length) return `<p class="muted">${esc(title)}: no pawn dots</p>`;
+  const xs = dots.map(d=>Number(d.x)), ys = dots.map(d=>Number(d.y));
+  const minX=Math.min(...xs), maxX=Math.max(...xs), minY=Math.min(...ys), maxY=Math.max(...ys);
+  const span = Math.max(maxX-minX, maxY-minY, 1000);
+  const pad = span * 0.12;
+  const w = 420, h = 240;
+  const sx = x => ((x-minX+pad)/(maxX-minX+2*pad))*w;
+  const sy = y => h - ((y-minY+pad)/(maxY-minY+2*pad))*h;
+  const pts = dots.map(d => {
+    const cx = sx(Number(d.x)).toFixed(1), cy = sy(Number(d.y)).toFixed(1);
+    const fill = d.online ? '#7aa36a' : '#9a907e';
+    return `<circle cx="${cx}" cy="${cy}" r="5" fill="${fill}"><title>${esc(d.name||d.player_id)}</title></circle>
+      <text x="${(+cx+7).toFixed(1)}" y="${(+cy+4).toFixed(1)}" fill="#e8e0d0" font-size="11">${esc(d.name||'')}</text>`;
+  }).join('');
+  return `<div><b>${esc(title)}</b> <span class="muted">${dots.length}</span>
+    <svg class="ovsvg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${pts}</svg></div>`;
 }
 function renderWorld(st){
   const j = st.joinable;
   $('#joinpill').textContent = j ? 'joinable' : 'not joinable';
   $('#joinpill').style.color = j ? 'var(--ok)' : 'var(--bad)';
-  const maps = (st.maps||[]).map(m => `<tr><td>${esc(m.kind)}</td><td>${esc(m.name)}</td><td>${esc(m.phase)}</td><td>${m.ready?'ready':'not ready'} ${esc(m.ready_col||'')}</td></tr>`).join('');
+  const bg = st.battlegroup || {};
+  const maps = (st.maps||[]).map(m => {
+    const blob = String(m.phase||'')+' '+String(m.ready_col||'')+' '+String(m.kind||'');
+    const modif = /modif/i.test(blob) || (m.kind==='Gateway' && !m.ready);
+    let label = m.ready ? 'ready' : (modif ? 'Modifying' : 'not ready');
+    const cls = m.ready ? 'ok' : 'bad';
+    return `<tr><td>${esc(m.kind)}</td><td>${esc(m.name)}</td><td>${esc(m.phase)}</td><td class="${cls}">${esc(label)} ${esc(m.ready_col||'')}</td></tr>`;
+  }).join('');
   const p = st.ports||{};
   const sm = st.steam||{};
   const h = st.health||{};
@@ -362,7 +418,7 @@ function renderWorld(st){
   const rem = (n.remotes||[]).map(x => `<tr><td>${esc(x.ip)}</td><td>${esc(x.kind)}</td><td>${x.count}</td></tr>`).join('');
   const notes = (st.join_notes||[]).join(' · ') || (j ? 'Survival, Overmap, and join ports are up' : '');
   const sch = st.schedule;
-  $('#rsnow').textContent = sch && sch.at ? ('Scheduled at ' + new Date(sch.at*1000).toLocaleString() + (sch.announced?' (countdown sent)':'')) : 'No restart scheduled';
+  $('#rsnow').textContent = sch && sch.at ? ('Scheduled at ' + new Date(sch.at*1000).toLocaleString() + (sch.announced?' (countdown sent)':'') + (sch.deferred?' (deferred: players online)':'')) : 'No restart scheduled';
   const smeta = st.settings_meta || {};
   const driftN = smeta.drift_count || 0;
   const needR = smeta.maps_need_restart;
@@ -371,11 +427,27 @@ function renderWorld(st){
   }${driftN && needR ? ' · ' : ''}${
     needR ? ('UserSettings applied ' + esc(fmtTs(smeta.last_apply_ts)) + ' — maps still need a restart to load rates (do not restart unless you intend downtime)') : ''
   }</div>` : '';
+  const gwBanner = bg.modifying ? `<div class="warn">Gateway / battlegroup Modifying — Survival/Overmap may not be Ready</div>` : '';
+  const bgServers = (bg.servers||[]).map(s => `<tr><td>${esc(s.map)}</td><td>${esc(s.phase)}</td><td>${s.ready?'<span class="ok">Ready</span>':'<span class="bad">not Ready</span>'}</td><td>${esc(s.restarts)}</td></tr>`).join('');
+  const ov = st.overview || {};
+  const dots = ov.dots || [];
+  const hagga = dots.filter(d => d.source !== 'overmap' && !/overmap/i.test(String(d.map||'')));
+  const over = dots.filter(d => d.source === 'overmap' || /overmap/i.test(String(d.map||'')));
   $('#worldcard').innerHTML = `
-    ${driftBanner}
+    ${driftBanner}${gwBanner}
     <p><b>${esc(st.bg||'no battlegroup')}</b> <span class="muted">${esc(st.ns||'')}</span></p>
     <p>${st.updating ? '<span class="bad">Steam/maintain running</span>' : '<span class="ok">Not updating</span>'} · ${esc(notes)}</p>
-    <p>Steam local <code>${esc(sm.local||'?')}</code> · public <code>${esc(sm.public||'?')}</code> · ${sm.update_available?'<span class="bad">update available</span>':'in sync'}</p>
+    <div class="grid">
+      <div class="card" style="margin:0"><b>Steam</b>
+        <p>installed <code>${esc(sm.local||'?')}</code> · public <code>${esc(sm.public||'?')}</code><br>
+        ${sm.update_available?'<span class="bad">update available</span>':'in sync'}<br>
+        <span class="muted">last check ${esc(fmtTs(sm.checked_ts)||'never')} · depot mtime ${esc(fmtTs(sm.installed_ts)||'?')}</span></p>
+      </div>
+      <div class="card" style="margin:0"><b>Battlegroup</b>
+        <p>phase <b>${esc(bg.phase||'?')}</b> · group ${esc(bg.server_group_phase||'?')}<br>
+        Gateway ${esc(bg.gateway_phase||'?')} · ${bg.modifying?'<span class="bad">Modifying</span>':'<span class="ok">not modifying</span>'}</p>
+      </div>
+    </div>
     <p>WSL reclaim <b>${esc(h.wsl_reclaim||'?')}</b> · ${esc(h.mem||'')} · disk ${esc(h.disk||'')}</p>
     <p>Rubberband TimeStamp expired (15m): <b>${n.expired_15m||0}</b></p>
     <p>Characters ${st.player_count_roster||0} · online ${st.player_count_known||0}</p>
@@ -386,7 +458,12 @@ function renderWorld(st){
        <a href="${esc(st.director)}" target="_blank" rel="noopener">Director</a></p>
     <pre>${esc(st.advertise||'')}</pre>
     <div class="grid">
+      ${svgMap('Hagga / Survival', hagga)}
+      ${svgMap('Overmap', over)}
+    </div>
+    <div class="grid">
       <div><b>Maps</b><table><thead><tr><th>Map</th><th>Pod</th><th>Phase</th><th></th></tr></thead><tbody>${maps||'<tr><td colspan=4>none</td></tr>'}</tbody></table></div>
+      <div><b>CR servers</b><table><thead><tr><th>Partition</th><th>Phase</th><th></th><th>Restarts</th></tr></thead><tbody>${bgServers||'<tr><td colspan=4>none</td></tr>'}</tbody></table></div>
       <div><b>Resources</b><table><thead><tr><th>Pod</th><th>Ready</th><th>Restarts</th><th>CPU</th><th>RAM</th></tr></thead><tbody>${pods||'<tr><td colspan=5>n/a</td></tr>'}</tbody></table></div>
     </div>
     <p><b>Join path</b> <span class="muted">(Survival LogNet RemoteAddr, up to 2h — connect/error lines, not a live roster)</span></p>
@@ -406,7 +483,7 @@ async function renderPlayers(){
     <td>${esc(p.name||'')}</td>
     <td>${p.online?'<span class="ok">online</span>':'<span class="muted">offline</span>'}</td>
     <td>${p.banned?'<span class="bad">ban</span>':''} ${p.whitelisted?'wl':''}</td>
-    <td>${(p.last_seen||'').trim()?esc(p.last_seen):'<span class="muted">never</span>'}${p.transferred?' <span class="muted">xfer</span>':''}</td>
+    <td>${(p.last_seen||'').trim()?esc(p.last_seen):'<span class="muted">never</span>'}${p.transferred?' <span class="muted">xfer</span>':''}${p.first_seen?'<br><span class="muted">first '+esc(fmtTs(p.first_seen))+'</span>':''}</td>
     <td>${esc(p.note||'')}</td>
     <td>
       <button class="act" data-use="${esc(p.player_id)}">Use</button>
@@ -449,7 +526,7 @@ async function loadChar(id){
     <p><b>${esc(p.name)}</b> · ${(d.mentors||[]).map(esc).join(', ') || 'no mentor'} ·
        caste ${(d.castes||[]).map(esc).join(', ') || '?'} · ${esc(v.map||p.map||'')} ·
        ${esc(p.life_state||'')} / ${esc(p.online_status)} · ${esc(p.platform||'')}</p>
-    <p>FLS <code>${esc(p.fls_id)}</code> · controller ${esc(p.controller_id)} · last seen here ${(p.last_seen||'').trim()?esc(p.last_seen):'<span class="muted">never on this world</span>'}${p.transferred?(' · transferred · origin last login '+esc(p.last_login||'')):''}</p>
+    <p>FLS <code>${esc(p.fls_id)}</code> · controller ${esc(p.controller_id)} · last seen here ${(p.last_seen||'').trim()?esc(p.last_seen):'<span class="muted">never on this world</span>'}${p.transferred?(' · transferred · origin last login '+esc(p.last_login||'')):''}${d.first_seen?(' · first seen '+esc(fmtTs(d.first_seen))):''}</p>
     <p>Health ${esc(v.health)}/${esc(v.health_max)} · water ${esc(v.hydration)} · spice ${esc(v.spice)}
        · heat ${esc(v.heat)} ${v.heatstroke?'<span class="bad">heatstroke</span>':''}
        · Eyes of Ibad ${esc(v.eyes_of_ibad)}%</p>
@@ -458,7 +535,7 @@ async function loadChar(id){
     <p>Tracked journey: ${esc(jn.journey||'none')} ${jn.landsraad?('· Landsraad '+esc(jn.landsraad)):''}</p>
     <p>Faction standing: ${rep} · guilds: ${g} · NPE ${d.npe_done?'done':'not done'} · contracts completed ${d.contracts_done||0}</p>
     <p>POIs: ${(d.pois||[]).map(esc).join(', ') || 'none'} · respawns: ${rsp}</p>
-    <p>Currency: ${cur}</p>
+    <p>Currency: ${cur} · Solari carried ${esc((d.solari||{}).carried||'0')} / bank ${esc((d.solari||{}).bank||'0')}</p>
     <p>Note: ${esc(d.note||'')}</p>
     <p>Loc ${esc(loc)}</p>
     <div class="grid">
@@ -514,6 +591,11 @@ async function loadSettings(){
   if ($('#greset')) $('#greset').checked = g.reset_progression !== false;
   if ($('#gtp')) $('#gtp').checked = g.teleport !== false;
   if ($('#gveh')) $('#gveh').checked = g.spawn_vehicle !== false;
+  const pr = c.presence || {};
+  if ($('#pjoin')) $('#pjoin').checked = pr.discord_join !== false;
+  if ($('#pleave')) $('#pleave').checked = pr.discord_leave !== false;
+  if ($('#pmaps')) $('#pmaps').checked = pr.discord_maps !== false;
+  if ($('#pdefer')) $('#pdefer').checked = pr.restart_defer_if_online !== false;
 }
 function objRows(items, extra){
   return (items||[]).map(b => `<tr>
@@ -552,6 +634,51 @@ async function loadVehicles(){
     `<p class="muted">${d.count||0} rows (cap 400). SELECT only.</p>
      <table><thead><tr><th>Kind</th><th>Id</th><th>Name</th><th>Map</th><th>Owner</th><th>Last seen here</th><th></th></tr></thead>
      <tbody>${rows||'<tr><td colspan=7>none / table not present</td></tr>'}</tbody></table>`;
+}
+async function loadSocial(){
+  const d = await api('/api/social');
+  const listings = (d.listings||[]).map(x => `<tr>
+    <td>${esc(x.exchange)}</td><td>${esc(x.item)}</td><td>${esc(x.price)}</td>
+    <td>${esc(x.seller_kind)}</td><td>${esc(x.seller)}</td><td>${esc(x.expires)}</td>
+  </tr>`).join('');
+  const ex = (d.exchanges||[]).map(x => esc(x.name||x.id)).join(', ') || 'none';
+  $('#choamlist').innerHTML = (d.error?`<p class="bad">${esc(d.error)}</p>`:'') +
+    `<p class="muted">${d.listing_count||0} listing(s). Exchanges: ${ex}. SELECT only.</p>
+     <table><thead><tr><th>Board</th><th>Item</th><th>Price</th><th></th><th>Seller</th><th>Expires</th></tr></thead>
+     <tbody>${listings||'<tr><td colspan=6 class="muted">No CHOAM orders yet</td></tr>'}</tbody></table>`;
+  const guilds = (d.guilds||[]).map(g => `<tr>
+    <td>${esc(g.name)}</td><td>${esc(g.faction)}</td><td>${esc(g.members)}</td><td>${esc(g.description)}</td>
+  </tr>`).join('');
+  const members = (d.members||[]).map(m => `<tr><td>${esc(m.guild)}</td><td>${esc(m.name)}</td><td>${esc(m.role)}</td></tr>`).join('');
+  const invites = (d.invites||[]).map(i => `<tr><td>${esc(i.guild)}</td><td>${esc(i.player)}</td><td>${esc(i.from)}</td></tr>`).join('');
+  $('#guildlist').innerHTML =
+    `<table><thead><tr><th>Guild</th><th>Faction</th><th>Members</th><th></th></tr></thead>
+     <tbody>${guilds||'<tr><td colspan=4>none</td></tr>'}</tbody></table>
+     <p class="muted">Members</p>
+     <table><thead><tr><th>Guild</th><th>Character</th><th>Role</th></tr></thead>
+     <tbody>${members||'<tr><td colspan=3>none</td></tr>'}</tbody></table>
+     <p class="muted">Invites</p>
+     <table><thead><tr><th>Guild</th><th>Player</th><th>From</th></tr></thead>
+     <tbody>${invites||'<tr><td colspan=3 class="muted">none</td></tr>'}</tbody></table>`;
+  const terms = (d.landsraad_terms||[]).map((t,i) => `<tr>
+    <td>${i===0?'<b>current</b>':''} ${esc(t.id)}</td><td>${esc(t.start)}</td><td>${esc(t.end)}</td>
+    <td>${esc(t.reigning)}</td><td>${esc(t.active_decree)}</td><td>${esc(t.winning)}</td>
+  </tr>`).join('');
+  const decrees = (d.decrees||[]).map(x => `<tr><td>${esc(x.id)}</td><td>${esc(x.name)}</td><td>${esc(x.enabled)}</td></tr>`).join('');
+  const tasks = (d.tasks||[]).map(x => `<tr><td>${esc(x.house)}</td><td>${esc(x.goal)}</td><td>${esc(x.state)}</td><td>${esc(x.winning)}</td></tr>`).join('');
+  $('#lrlist').innerHTML =
+    `<table><thead><tr><th>Term</th><th>Start</th><th>End</th><th>Reigning</th><th>Active decree</th><th>Winning</th></tr></thead>
+     <tbody>${terms||'<tr><td colspan=6>none</td></tr>'}</tbody></table>
+     <p class="muted">Decrees</p>
+     <table><thead><tr><th>Id</th><th>Name</th><th></th></tr></thead>
+     <tbody>${decrees||'<tr><td colspan=3>none</td></tr>'}</tbody></table>
+     <p class="muted">Current-term tasks</p>
+     <table><thead><tr><th>House</th><th>Goal</th><th></th><th>Winning</th></tr></thead>
+     <tbody>${tasks||'<tr><td colspan=4>none</td></tr>'}</tbody></table>`;
+  const sol = (d.solari||[]).map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.carried)}</td><td>${esc(x.bank)}</td></tr>`).join('');
+  $('#solarilist').innerHTML =
+    `<table><thead><tr><th>Character</th><th>Carried</th><th>Bank</th></tr></thead>
+     <tbody>${sol||'<tr><td colspan=3 class="muted">No SolarisCoin / no CHOAM bank rows</td></tr>'}</tbody></table>`;
 }
 document.body.addEventListener('click', async (e)=>{
   const t = e.target;
@@ -616,7 +743,12 @@ $('#inisave').onclick = async ()=> {
 $('#iniapply').onclick = async ()=> { if(!confirm('Apply UserSettings to the battlegroup? Restart maps afterwards. That is downtime on the public world.')) return; out(await api('/api/action', gmBody({op:'apply-settings', confirm:true}))); };
 $('#cfgsave').onclick = async ()=> {
   const items = $('#witems').value.split(/\n/).map(l => l.trim()).filter(Boolean).map(l => { const [item,qty]=l.split(','); return {item:item.trim(), qty:+(qty||1)}; });
-  const body = {op:'save-config', welcome:{enabled:$('#wen').checked, items}};
+  const body = {op:'save-config', welcome:{enabled:$('#wen').checked, items}, presence:{
+    discord_join: $('#pjoin').checked,
+    discord_leave: $('#pleave').checked,
+    discord_maps: $('#pmaps').checked,
+    restart_defer_if_online: $('#pdefer').checked
+  }};
   if ($('#whurl').value.trim()) body.webhook_url = $('#whurl').value.trim();
   out(await api('/api/action', body));
 };

@@ -555,6 +555,53 @@ def player_location(player_id: str) -> dict | None:
     return None
 
 
+def service_broadcast_fields(
+    *,
+    kind: str = "Generic",
+    title: str = "Server",
+    body: str = "",
+    duration: int = 30,
+    shutdown_type: str = "Restart",
+    shutdown_duration: int = 600,
+    frequency: int = 60,
+    cancel: bool = False,
+    at: int = 0,
+) -> dict:
+    """Inner ServerCommand for Funcom ServiceBroadcast. Title/Body live under BroadcastPayload."""
+    title = str(title or "Server")
+    body = str(body or "")
+    loc = [
+        {"Key": "en", "Title": title, "Body": body},
+        {"Key": "en-US", "Title": title, "Body": body},
+    ]
+    if cancel or str(kind) == "ServerShutdown":
+        now = int(time.time())
+        ts = int(at) if at else now + int(shutdown_duration or 0)
+        payload = {
+            "ShutdownType": "Cancel" if cancel else str(shutdown_type or "Restart"),
+            "DateTimestamp": now,
+            "ShutdownDuration": 0 if cancel else int(shutdown_duration or 0),
+            "ShutdownTimestamp": now if cancel else ts,
+            "BroadcastFrequency": int(frequency or 60),
+            "LocalizedText": loc,
+        }
+        if cancel:
+            payload["ShouldCancel"] = True
+        return {
+            "ServerCommand": "ServiceBroadcast",
+            "BroadcastType": "ServerShutdown",
+            "BroadcastPayload": payload,
+        }
+    return {
+        "ServerCommand": "ServiceBroadcast",
+        "BroadcastType": "Generic",
+        "BroadcastPayload": {
+            "BroadcastDuration": int(duration or 30),
+            "LocalizedText": loc,
+        },
+    }
+
+
 def mq_publish(fields: dict) -> tuple[bool, str]:
     n = ns()
     pod = pod_name("mq-game-sts")
@@ -604,9 +651,12 @@ def maps_from_pods() -> list[dict]:
         if len(parts) < 3:
             continue
         name, ready, phase = parts[0], parts[1], parts[2]
-        if "sg-survival" not in name and "sg-overmap" not in name:
+        if "sg-survival" not in name and "sg-overmap" not in name and "sgw-deploy" not in name:
             continue
-        kind = "Survival" if "survival" in name else "Overmap"
+        if "sgw-deploy" in name:
+            kind = "Gateway"
+        else:
+            kind = "Survival" if "survival" in name else "Overmap"
         rows.append(
             {
                 "name": name,
@@ -816,6 +866,8 @@ def world_status(ip: str) -> dict:
         notes.append("Survival is not 1/1 Running")
     if not overmap_ok:
         notes.append("Overmap is not 1/1 Running")
+    if any(m["kind"] == "Gateway" and not m["ready"] for m in maps):
+        notes.append("Gateway is not 1/1 Running")
     if not ports.get("rmq_31982"):
         notes.append("join TCP 31982 is down")
     if not ports.get("director_31519"):
@@ -1022,18 +1074,22 @@ def do_action(body: dict) -> dict:
         save_json_file(WHITELIST_FILE, wl)
         return {"ok": True, "out": "whitelist enabled=%s" % wl["enabled"]}
     if op == "broadcast":
-        fields = {
-            "ServerCommand": "ServiceBroadcast",
-            "BroadcastType": str(body.get("broadcast_type") or "Generic"),
-            "Title": str(body.get("title") or "Server"),
-            "Body": str(body.get("body") or ""),
-            "BroadcastDuration": int(body.get("duration") or 30),
-        }
-        if fields["BroadcastType"] == "ServerShutdown":
-            fields["ShutdownType"] = str(body.get("shutdown_type") or "Restart")
-            fields["ShutdownDuration"] = int(body.get("shutdown_duration") or 600)
-            fields["BroadcastFrequency"] = int(body.get("frequency") or 60)
-            fields["ShouldCancel"] = bool(body.get("cancel"))
+        title = str(body.get("title") or "Server")
+        text = str(body.get("body") or "").strip()
+        kind = str(body.get("broadcast_type") or "Generic")
+        cancel = bool(body.get("cancel"))
+        if kind != "ServerShutdown" and not cancel and not text:
+            return {"ok": False, "error": "type a message in the Broadcast box"}
+        fields = service_broadcast_fields(
+            kind=kind,
+            title=title,
+            body=text,
+            duration=int(body.get("duration") or 30),
+            shutdown_type=str(body.get("shutdown_type") or "Restart"),
+            shutdown_duration=int(body.get("shutdown_duration") or 600),
+            frequency=int(body.get("frequency") or 60),
+            cancel=cancel,
+        )
         ok, msg = mq_publish(fields)
         return {"ok": ok, "out": msg}
     if op == "grant-item":
@@ -1266,6 +1322,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/config":
             fn = globals().get("read_admin_config")
             self._json(200, fn() if callable(fn) else {})
+            return
+        if path == "/api/social":
+            fn = globals().get("social_intel")
+            if not callable(fn):
+                self._json(501, {"ok": False, "error": "extras not loaded"})
+                return
+            self._json(200, fn())
             return
         if path == "/api/world-objects":
             fn = globals().get("world_objects")
