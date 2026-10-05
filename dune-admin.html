@@ -136,7 +136,7 @@ a{color:var(--acc)}
   <div class="card">
     <p class="muted">Target must be <b>online</b> for live GM commands. Click <b>Use</b> on your Players row (Funcom <code>name#digits</code> is fine). Grants send Funcom’s <code>accounts.user</code> FLS internally — do not paste the world HostId. Header <b>Dry-run</b> must be unchecked before grants go to the world. Locate can stay on Dry-run. Item search matches display names (Calibrated servok) as well as FNames.</p>
     <div class="row">
-      <label>Confirm phrase <input id="gmphrase" placeholder="WIPE or RESET" style="width:10em"/></label>
+      <label>Confirm phrase <input id="gmphrase" placeholder="WIPE / RESET / DC / DELETE" style="width:14em"/></label>
     </div>
     <div class="row">
       <label>Player id <input id="tid" size="36" placeholder="FLS hex or Funcom name#id"/></label>
@@ -169,7 +169,9 @@ a{color:var(--acc)}
       <label>Z <input id="z" style="width:7em"/></label>
       <button class="act" id="locate">Read location</button>
       <button class="act" id="tp">Teleport (safe snap)</button>
+      <button class="act bad" id="tpoff">Offline-move fallback</button>
     </div>
+    <p class="muted">Offline-move is only if they are already offline and TeleportTo no-ops. Type <code>DC</code> in Confirm phrase. It will not kick them and will not UDP-drop. Maps still own live pawns.</p>
     <div class="row">
       <label>Vehicle
         <select id="veh">
@@ -192,8 +194,14 @@ a{color:var(--acc)}
 <section id="bases" class="tab" hidden>
   <div class="card">
     <h3 style="margin:0 0 8px">Bases / blueprints / backups</h3>
-    <p class="muted">Read-only Postgres listing. Does not move, delete, or export world objects.</p>
+    <p class="muted">Read-only Postgres listing. Queue is a reminder only — this panel will not SQL-DELETE live objects (maps overwrite mute DELETEs).</p>
     <div id="baselist">Open this tab to load.</div>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 8px">Delete queue</h3>
+    <p class="muted">Local JSON on this host. Apply is refused until a Funcom procedure is proven. Type DELETE in Confirm phrase to try Apply (it will still refuse live DML).</p>
+    <div id="dellist">Open Bases to load.</div>
+    <p class="row"><button class="act bad" id="delapply">Apply queued deletes</button></p>
   </div>
   <div class="card">
     <h3 style="margin:0 0 8px">Orphaned owners</h3>
@@ -302,7 +310,7 @@ function show(id){
   if (id==='audit') loadAudit();
   if (id==='settings') loadSettings();
   if (id==='world') loadBackups();
-  if (id==='bases') loadBases();
+  if (id==='bases') { loadBases(); loadDeleteQueue(); }
   if (id==='vehicles') loadVehicles();
   if (id==='social') loadSocial();
 }
@@ -447,6 +455,10 @@ function renderWorld(st){
         <p>phase <b>${esc(bg.phase||'?')}</b> · group ${esc(bg.server_group_phase||'?')}<br>
         Gateway ${esc(bg.gateway_phase||'?')} · ${bg.modifying?'<span class="bad">Modifying</span>':'<span class="ok">not modifying</span>'}</p>
       </div>
+      <div class="card" style="margin:0"><b>Listing</b>
+        <p>title (Funcom CR) <b>${esc(bg.title||st.bg||'?')}</b><br>
+        <span class="muted">subtitle is Settings → Listing → Bgd.ServerDisplayName (commented = unused)</span></p>
+      </div>
     </div>
     <p>WSL reclaim <b>${esc(h.wsl_reclaim||'?')}</b> · ${esc(h.mem||'')} · disk ${esc(h.disk||'')}</p>
     <p>Rubberband TimeStamp expired (15m): <b>${n.expired_15m||0}</b></p>
@@ -455,7 +467,8 @@ function renderWorld(st){
        Director 31519 ${p.director_31519?'<span class="ok">up</span>':'<span class="bad">down</span>'} ·
        File Browser ${p.filebrowser_18888?'<span class="ok">up</span>':'<span class="muted">down</span>'}</p>
     <p><a href="${esc(st.filebrowser)}" target="_blank" rel="noopener">File Browser</a> ·
-       <a href="${esc(st.director)}" target="_blank" rel="noopener">Director</a></p>
+       <a href="${esc(st.director)}" target="_blank" rel="noopener">Director</a> ·
+       <a href="/status" target="_blank" rel="noopener">Public status (no token)</a></p>
     <pre>${esc(st.advertise||'')}</pre>
     <div class="grid">
       ${svgMap('Hagga / Survival', hagga)}
@@ -559,7 +572,7 @@ async function loadAudit(){
 }
 async function loadSettings(){
   const s = await api('/api/settings');
-  const openCats = new Set(['Durability','Harvesting','Combat','Survival']);
+  const openCats = new Set(['Durability','Harvesting','Combat','Survival','Pings','Listing']);
   const fileShort = { 'UserServerCustomSettings.ini':'custom', 'UserGame.ini':'game', 'UserEngine.ini':'engine' };
   const cats = [];
   for (const k of (s.keys||[])){
@@ -606,6 +619,7 @@ function objRows(items, extra){
     <td>${esc(b.owner_name||'')}<br><code>${esc(b.owner_id||'')}</code></td>
     <td>${(b.last_seen||'').trim()?esc(b.last_seen):'<span class="muted">never</span>'}${b.transferred?' <span class="muted">xfer</span>':''}</td>
     <td>${b.orphan?'<span class="bad">'+esc(b.orphan_reason||'orphan')+'</span>':''}</td>
+    <td><button class="act" data-qkind="${esc(b.kind||'')}" data-qid="${esc(b.id||'')}" data-qname="${esc(b.name||'')}" data-qmap="${esc(b.map||'')}">Queue</button></td>
   </tr>`).join('');
 }
 async function loadBases(){
@@ -614,8 +628,8 @@ async function loadBases(){
   const rows = objRows(d.items);
   $('#baselist').innerHTML = (d.error?`<p class="bad">${esc(d.error)}</p>`:'') +
     `<p class="muted">${d.count||0} rows (cap 400 per table). SELECT only.</p>
-     <table><thead><tr><th>Kind</th><th>Id</th><th>Name</th><th>Map</th><th>Owner</th><th>Last seen here</th><th></th></tr></thead>
-     <tbody>${rows||'<tr><td colspan=7>none / table not present</td></tr>'}</tbody></table>`;
+     <table><thead><tr><th>Kind</th><th>Id</th><th>Name</th><th>Map</th><th>Owner</th><th>Last seen here</th><th></th><th></th></tr></thead>
+     <tbody>${rows||'<tr><td colspan=8>none / table not present</td></tr>'}</tbody></table>`;
   const orows = (o.items||[]).map(x => `<tr>
     <td>${esc(x.owner_name||'')}<br><code>${esc(x.owner_id||'')}</code></td>
     <td>${(x.last_seen||'').trim()?esc(x.last_seen):'<span class="muted">never</span>'}</td>
@@ -632,8 +646,18 @@ async function loadVehicles(){
   const rows = objRows(d.items);
   $('#vehlist').innerHTML = (d.error?`<p class="bad">${esc(d.error)}</p>`:'') +
     `<p class="muted">${d.count||0} rows (cap 400). SELECT only.</p>
-     <table><thead><tr><th>Kind</th><th>Id</th><th>Name</th><th>Map</th><th>Owner</th><th>Last seen here</th><th></th></tr></thead>
-     <tbody>${rows||'<tr><td colspan=7>none / table not present</td></tr>'}</tbody></table>`;
+     <table><thead><tr><th>Kind</th><th>Id</th><th>Name</th><th>Map</th><th>Owner</th><th>Last seen here</th><th></th><th></th></tr></thead>
+     <tbody>${rows||'<tr><td colspan=8>none / table not present</td></tr>'}</tbody></table>`;
+}
+async function loadDeleteQueue(){
+  const d = await api('/api/delete-queue');
+  const rows = (d.items||[]).map(x => `<tr>
+    <td>${esc(x.kind)}</td><td><code>${esc(x.id)}</code></td><td>${esc(x.name)}</td><td>${esc(x.map)}</td>
+    <td><button class="act" data-unq="${esc(x.id)}">Remove</button></td>
+  </tr>`).join('');
+  if ($('#dellist')) $('#dellist').innerHTML =
+    `<table><thead><tr><th>Kind</th><th>Id</th><th>Name</th><th>Map</th><th></th></tr></thead>
+     <tbody>${rows||'<tr><td colspan=5 class="muted">empty</td></tr>'}</tbody></table>`;
 }
 async function loadSocial(){
   const d = await api('/api/social');
@@ -696,6 +720,14 @@ document.body.addEventListener('click', async (e)=>{
   }
   if (t.dataset.use){ $('#tid').value = t.dataset.use; $('#cid').value = t.dataset.use; show('tools'); }
   if (t.dataset.char){ show('char'); loadChar(t.dataset.char); }
+  if (t.dataset.qid){
+    out(await api('/api/action',{op:'queue-delete', kind:t.dataset.qkind, id:t.dataset.qid, name:t.dataset.qname, map:t.dataset.qmap}));
+    loadDeleteQueue();
+  }
+  if (t.dataset.unq){
+    out(await api('/api/action',{op:'unqueue-delete', id:t.dataset.unq}));
+    loadDeleteQueue();
+  }
   if (t.dataset.kick){ out(await api('/api/action', gmBody({op:'kick',player_id:t.dataset.kick}))); renderPlayers(); }
   if (t.dataset.ban){
     if(!confirm('Ban '+t.dataset.ban+'?')) return;
@@ -719,11 +751,20 @@ $('#water').onclick = async ()=> gm({op:'refill-water', player_id:$('#tid').valu
 $('#sset').onclick = async ()=> gm({op:'skill-module', player_id:$('#tid').value, module:$('#smod').value, level:+$('#slev').value||1});
 $('#locate').onclick = async ()=> { const d=await gm({op:'locate', player_id:$('#tid').value}); if(d.location){ $('#x').value=d.location.x; $('#y').value=d.location.y; $('#z').value=d.location.z;} };
 $('#tp').onclick = async ()=> gm({op:'teleport', player_id:$('#tid').value, x:+$('#x').value, y:+$('#y').value, z:+$('#z').value});
+$('#tpoff').onclick = async ()=> {
+  if(!confirm('Offline-move only works if they are already offline. Type DC in Confirm phrase. This will not kick or UDP-drop.')) return;
+  gm({op:'teleport-offline', player_id:$('#tid').value, x:+$('#x').value, y:+$('#y').value, z:+$('#z').value, confirm_text:($('#gmphrase').value||'').trim()});
+};
 $('#tpto').onclick = async ()=> gm({op:'teleport-to-player', player_id:$('#tid').value, target_id:$('#toid').value});
 $('#spawnv').onclick = async ()=> { const [v,t]=$('#veh').value.split('|'); gm({op:'spawn-vehicle', player_id:$('#tid').value, vehicle:v, template:t, x:$('#x').value, y:$('#y').value, z:$('#z').value}); };
 $('#welcomenow').onclick = async ()=> gm({op:'welcome-now', player_id:$('#tid').value});
 $('#wipeinv').onclick = async ()=> { if(!confirm('Wipe inventory? Type WIPE in Confirm phrase.')) return; gm({op:'clean-inventory', player_id:$('#tid').value, confirm:true, confirm_text:($('#gmphrase').value||'').trim()}); };
 $('#wipeprog').onclick = async ()=> { if(!confirm('Reset progression? Type RESET in Confirm phrase.')) return; gm({op:'reset-progression', player_id:$('#tid').value, confirm:true, confirm_text:($('#gmphrase').value||'').trim()}); };
+$('#delapply').onclick = async ()=> {
+  if(!confirm('Apply will still refuse live DELETE. Type DELETE in Confirm phrase.')) return;
+  out(await api('/api/action', gmBody({op:'apply-delete-queue', confirm:true, confirm_text:($('#gmphrase').value||'').trim()})));
+  loadDeleteQueue();
+};
 $('#cload').onclick = async ()=> loadChar($('#cid').value);
 $('#rssave').onclick = async ()=> {
   const v = $('#rsat').value; if(!v){ out('pick a time'); return; }

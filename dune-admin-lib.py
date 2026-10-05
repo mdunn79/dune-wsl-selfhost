@@ -7,6 +7,7 @@ import re
 import secrets
 import subprocess
 import time
+import html as html_mod
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -14,7 +15,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 M = None
-CONFIG_FILE = NOTES_FILE = WELCOME_FILE = PRESENCE_FILE = None
+CONFIG_FILE = NOTES_FILE = WELCOME_FILE = PRESENCE_FILE = DELETE_QUEUE_FILE = STATUS_DIR = None
 SETUP_CFG = Path("/home/dune/.dune/download/scripts/setup/config")
 MANIFEST = Path("/home/dune/.dune/download/steamapps/appmanifest_4754530.acf")
 APPINFO = Path("/home/dune/.dune/last-appinfo.txt")
@@ -41,11 +42,14 @@ GM_GATES = {
     "reset-progression": "reset_progression",
     "teleport": "teleport",
     "teleport-to-player": "teleport",
+    "teleport-offline": "teleport",
     "spawn-vehicle": "spawn_vehicle",
 }
 GM_PHRASES = {
     "clean-inventory": "WIPE",
     "reset-progression": "RESET",
+    "teleport-offline": "DC",
+    "apply-delete-queue": "DELETE",
 }
 LIVE_EFFECT_OPS = set(GM_GATES) | {
     "start",
@@ -61,10 +65,12 @@ LIVE_EFFECT_OPS = set(GM_GATES) | {
     "ban",
     "broadcast",
     "whitelist-enable",
+    "teleport-offline",
+    "apply-delete-queue",
 }
 
-def _k(file: str, key: str, cat: str, hint: str = "") -> dict:
-    return {"file": file, "key": key, "cat": cat, "hint": hint}
+def _k(file: str, key: str, cat: str, hint: str = "", section: str = "") -> dict:
+    return {"file": file, "key": key, "cat": cat, "hint": hint, "section": section}
 
 
 INI_KEYS = [
@@ -143,7 +149,84 @@ INI_KEYS = [
     _k("UserServerCustomSettings.ini", "BaseBackupToolTimeRestriction", "Building", "Hours; custom-settings copy of the cooldown"),
     _k("UserServerCustomSettings.ini", "BuildingPieceLimitMultiplier", "Building", "0.1 to 10"),
     _k("UserServerCustomSettings.ini", "bBuildingInfiniteStability", "Building", "True / False"),
-    _k("UserEngine.ini", "Bgd.ServerDisplayName", "Listing", "Sietch name in Funcom directory"),
+    _k("UserEngine.ini", "Bgd.ServerDisplayName", "Listing", "Directory subtitle. Funcom CR spec.title is the listing title. If this line is commented, only the CR title shows."),
+    _k(
+        "UserGame.ini",
+        "m_PingsPerPlayerLimit",
+        "Pings",
+        "Simultaneous pings; shipped 5",
+        "/Script/DuneSandbox.PingSystemSettings",
+    ),
+    _k(
+        "UserGame.ini",
+        "m_PingMaximumDistance",
+        "Pings",
+        "Ping range; shipped 2000",
+        "/Script/DuneSandbox.PingSystemSettings",
+    ),
+    _k(
+        "UserGame.ini",
+        "m_PingInWorldMarkerExpiryTime",
+        "Pings",
+        "World ping lifetime seconds; shipped 5",
+        "/Script/DuneSandbox.PingSystemSettings",
+    ),
+    _k(
+        "UserGame.ini",
+        "m_PingMapMarkerExpiryTime",
+        "Pings",
+        "Map ping lifetime seconds; shipped 60",
+        "/Script/DuneSandbox.PingSystemSettings",
+    ),
+    _k(
+        "UserGame.ini",
+        "m_CostAmount",
+        "Recustomize",
+        "Solaris to recustomize; shipped 5000, 0 = free",
+        "/Script/DuneSandbox.CharacterRecustomizerSubsystem",
+    ),
+    _k(
+        "UserGame.ini",
+        "m_MaxGuildsAllowed",
+        "Guilds",
+        "Guild cap; shipped 3",
+        "/Script/DuneSandbox.GuildSettings",
+    ),
+    _k(
+        "UserGame.ini",
+        "m_DefaultReconnectGracePeriodSeconds",
+        "Reconnect",
+        "Hagga reconnect grace; shipped 300. Do not set 0 on a public world.",
+        "/Script/DuneSandbox.PlayerOnlineStateSettings",
+    ),
+    _k(
+        "UserGame.ini",
+        "m_OvermapReturnGracePeriodSeconds",
+        "Reconnect",
+        "Overmap return grace; shipped 90",
+        "/Script/DuneSandbox.PlayerOnlineStateSettings",
+    ),
+    _k(
+        "UserGame.ini",
+        "m_InstancedMapReconnectGracePeriodSeconds",
+        "Reconnect",
+        "Instance reconnect grace; shipped 300",
+        "/Script/DuneSandbox.PlayerOnlineStateSettings",
+    ),
+    _k(
+        "UserGame.ini",
+        "SellOrderDailySolarisFee",
+        "CHOAM fees",
+        "Daily listing fee; shipped 20, 0 = none",
+        "/Script/DuneSandbox.DuneExchangeSettings",
+    ),
+    _k(
+        "UserGame.ini",
+        "SellOrderPricePercentageFee",
+        "CHOAM fees",
+        "Percent listing fee; shipped 2.0, 0 = none",
+        "/Script/DuneSandbox.DuneExchangeSettings",
+    ),
 ]
 
 CATALOG = [
@@ -191,12 +274,14 @@ SKILL_MODULES = [
 
 
 def bind(main) -> None:
-    global M, CONFIG_FILE, NOTES_FILE, WELCOME_FILE, PRESENCE_FILE
+    global M, CONFIG_FILE, NOTES_FILE, WELCOME_FILE, PRESENCE_FILE, DELETE_QUEUE_FILE, STATUS_DIR
     M = main
     CONFIG_FILE = M.DUNE / "admin-config.json"
     NOTES_FILE = M.DUNE / "admin-notes.json"
     WELCOME_FILE = M.DUNE / "admin-welcome.json"
     PRESENCE_FILE = M.DUNE / "admin-presence.json"
+    DELETE_QUEUE_FILE = M.DUNE / "admin-delete-queue.json"
+    STATUS_DIR = M.DUNE / "public-status"
     M.steam_ids = steam_ids
     M.host_health = host_health
     M.net_health = net_health
@@ -216,6 +301,9 @@ def bind(main) -> None:
     M.stamp_op = stamp_op
     M.world_objects = world_objects
     M.social_intel = social_intel
+    M.public_status = public_status
+    M.public_status_page = public_status_page
+    M.read_delete_queue = read_delete_queue
 
 
 def cfg() -> dict:
@@ -331,6 +419,7 @@ def battlegroup_overview() -> dict:
         "gateway_phase": "",
         "modifying": False,
         "servers": [],
+        "title": "",
     }
     if not n:
         return out
@@ -340,6 +429,8 @@ def battlegroup_overview() -> dict:
     items = data.get("items") or ([data] if data.get("kind") else [])
     if not items:
         return out
+    spec = items[0].get("spec") or {}
+    out["title"] = str(spec.get("title") or "")
     st = items[0].get("status") or {}
     out["phase"] = str(st.get("phase") or "")
     out["server_group_phase"] = str(st.get("serverGroupPhase") or "")
@@ -843,11 +934,14 @@ def ini_get(text: str, key: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def ini_set(text: str, key: str, value: str) -> str:
+def ini_set(text: str, key: str, value: str, section: str = "") -> str:
     line = "%s=%s" % (key, value)
     pat = re.compile(r"(?m)^[;\s]*%s\s*=.*$" % re.escape(key))
     if pat.search(text):
         return pat.sub(line, text, count=1)
+    if section:
+        hdr = "[%s]" % section.strip("[]")
+        return text.rstrip() + "\n\n%s\n%s\n" % (hdr, line)
     return text.rstrip() + "\n" + line + "\n"
 
 
@@ -933,7 +1027,7 @@ def settings_meta(values: list | None = None, drift_count: int | None = None) ->
 
 
 def write_settings(updates: list) -> tuple[bool, str]:
-    allowed = {(s["file"], s["key"]) for s in INI_KEYS}
+    allowed = {(s["file"], s["key"]): s for s in INI_KEYS}
     by_file: dict[str, list] = {}
     for u in updates:
         by_file.setdefault(str(u.get("file")), []).append(u)
@@ -949,12 +1043,13 @@ def write_settings(updates: list) -> tuple[bool, str]:
             text = p.read_text(encoding="utf-8", errors="replace")
         for u in items:
             key = str(u.get("key") or "")
-            if (fname, key) not in allowed:
+            spec = allowed.get((fname, key))
+            if not spec:
                 continue
             val = str(u.get("value") or "").strip()
             if not val and not ini_get(text, key):
                 continue
-            text = ini_set(text, key, val)
+            text = ini_set(text, key, val, spec.get("section") or "")
         dest_setup = SETUP_CFG / fname
         dest_setup.parent.mkdir(parents=True, exist_ok=True)
         dest_setup.write_text(text, encoding="utf-8")
@@ -1621,6 +1716,94 @@ def read_admin_config() -> dict:
     }
 
 
+def read_delete_queue() -> dict:
+    d = M.load_json_file(DELETE_QUEUE_FILE, {"items": []})
+    if not isinstance(d, dict):
+        d = {"items": []}
+    if not isinstance(d.get("items"), list):
+        d["items"] = []
+    return d
+
+
+def public_from_world(st: dict) -> dict:
+    maps = [
+        {"kind": m.get("kind"), "ready": bool(m.get("ready")), "phase": m.get("phase")}
+        for m in (st.get("maps") or [])
+    ]
+    bg = st.get("battlegroup") or {}
+    return {
+        "ok": True,
+        "title": bg.get("title") or st.get("bg") or "",
+        "joinable": bool(st.get("joinable")),
+        "online": int(st.get("player_count_known") or 0),
+        "maps": maps,
+        "modifying": bool(bg.get("modifying")),
+        "updating": bool(st.get("updating")),
+        "ts": int(time.time()),
+    }
+
+
+def public_status() -> dict:
+    try:
+        return public_from_world(M.world_status(M.lan_ip()))
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def public_status_page(data: dict | None = None) -> str:
+    d = data if isinstance(data, dict) else public_status()
+    esc = html_mod.escape
+    maps = "".join(
+        "<li>%s — %s</li>"
+        % (
+            esc(str(m.get("kind") or "")),
+            "Ready" if m.get("ready") else esc(str(m.get("phase") or "down")),
+        )
+        for m in (d.get("maps") or [])
+    )
+    join = "joinable" if d.get("joinable") else "not joinable"
+    return """<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta http-equiv="refresh" content="30"/>
+<title>%s</title>
+<style>
+body{margin:0;font:16px/1.45 system-ui,Segoe UI,sans-serif;background:#12110e;color:#e8e0d0}
+main{max-width:520px;margin:8vh auto;padding:24px;background:#1c1a16;border:1px solid #2a261f;border-radius:10px}
+h1{font-size:20px;color:#c4a35a;margin:0 0 12px}
+.ok{color:#7aa36a}.bad{color:#c45a4a}.muted{color:#9a907e}
+ul{padding-left:1.2em}
+</style></head><body><main>
+<h1>%s</h1>
+<p class="%s">%s</p>
+<p>Online: <b>%s</b></p>
+<p class="muted">%s%s</p>
+<ul>%s</ul>
+<p class="muted">Public status only. No admin, no roster names. LAN TCP 18889 — do not port-forward.</p>
+</main></body></html>
+""" % (
+        esc(d.get("title") or "Dune status"),
+        esc(d.get("title") or "Dune"),
+        "ok" if d.get("joinable") else "bad",
+        join,
+        d.get("online") if d.get("ok") else "?",
+        "Gateway Modifying. " if d.get("modifying") else "",
+        "Steam/maintain running. " if d.get("updating") else "",
+        maps or "<li class=muted>no maps listed</li>",
+    )
+
+
+def write_public_status_files(st: dict | None = None) -> None:
+    if STATUS_DIR is None:
+        return
+    data = public_from_world(st) if isinstance(st, dict) else public_status()
+    try:
+        STATUS_DIR.mkdir(parents=True, exist_ok=True)
+        (STATUS_DIR / "status.json").write_text(json.dumps(data, default=str), encoding="utf-8")
+        (STATUS_DIR / "index.html").write_text(public_status_page(data), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def webhook(event: str, text: str) -> None:
     url = str(cfg().get("webhook_url") or "").strip()
     if not url.startswith("http"):
@@ -1709,6 +1892,73 @@ def extra_action(body: dict):
         save_cfg(c)
         ok, msg = M.mq_publish(M.service_broadcast_fields(cancel=True, title="Restart", body="Cancelled"))
         return {"ok": True, "out": "cleared; cancel-broadcast " + msg}
+    if op == "teleport-offline":
+        if not pid:
+            return {"ok": False, "error": "player_id required"}
+        try:
+            x, y, z = float(body.get("x")), float(body.get("y")), float(body.get("z"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "X/Y/Z required"}
+        row = player_row(pid) or {}
+        online = str(row.get("online_status") or "").lower() in ("online", "1", "t", "true")
+        if not online:
+            players, _e = M.load_players()
+            online = any(p.get("online") and p.get("player_id") == pid for p in players)
+        if online:
+            return {
+                "ok": False,
+                "error": "they are still online. Use TeleportTo. Offline-move is only after they are already offline. UDP drop is not offered.",
+            }
+        procs = _psql_rows(
+            "SELECT p.proname, pg_get_function_identity_arguments(p.oid) "
+            "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "WHERE n.nspname='dune' AND (p.proname ILIKE '%offline%' OR p.proname ILIKE '%move_player%' "
+            "OR p.proname ILIKE '%admin_move%') ORDER BY 1 LIMIT 40"
+        )
+        names = [("%s(%s)" % (r[0], r[1] if len(r) > 1 else "")) for r in procs]
+        return {
+            "ok": False,
+            "error": "no verified Funcom offline-move call on this host (UDP drop is not offered). TeleportTo remains the live path.",
+            "at": {"x": x, "y": y, "z": z},
+            "procs": names,
+        }
+    if op == "queue-delete":
+        kind = str(body.get("kind") or "").strip()
+        oid = str(body.get("id") or "").strip()
+        if not kind or not oid:
+            return {"ok": False, "error": "kind and id required"}
+        q = read_delete_queue()
+        items = q.get("items") or []
+        if any(str(x.get("id")) == oid and str(x.get("kind")) == kind for x in items):
+            return {"ok": True, "out": "already queued", "queue": q}
+        items.append(
+            {
+                "kind": kind,
+                "id": oid,
+                "name": str(body.get("name") or "")[:120],
+                "map": str(body.get("map") or "")[:80],
+                "ts": M._now(),
+            }
+        )
+        q["items"] = items[-80:]
+        M.save_json_file(DELETE_QUEUE_FILE, q)
+        return {"ok": True, "out": "queued (reminder only; maps still own live objects)", "queue": q}
+    if op == "unqueue-delete":
+        oid = str(body.get("id") or "").strip()
+        q = read_delete_queue()
+        q["items"] = [x for x in (q.get("items") or []) if str(x.get("id")) != oid]
+        M.save_json_file(DELETE_QUEUE_FILE, q)
+        return {"ok": True, "out": "removed", "queue": q}
+    if op == "apply-delete-queue":
+        q = read_delete_queue()
+        items = q.get("items") or []
+        if not items:
+            return {"ok": False, "error": "queue is empty"}
+        return {
+            "ok": False,
+            "error": "refusing live DELETE/UPDATE. Funcom maps hold objects in memory; a mute SQL delete is overwritten. Queue stays as a reminder until a Funcom procedure is proven.",
+            "queue": q,
+        }
     if op == "rotate-token":
         if not confirm:
             return {"ok": False, "error": "confirm required"}
@@ -1837,6 +2087,10 @@ def tick_extras() -> None:
         st = M.world_status(ip)
     except Exception:
         return
+    try:
+        write_public_status_files(st)
+    except Exception:
+        pass
     pres = presence_cfg()
     joinable = bool(st.get("joinable"))
     maps = st.get("maps") or []

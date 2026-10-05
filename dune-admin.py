@@ -1269,6 +1269,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/healthz":
             self._json(200, {"ok": True})
             return
+        if path in ("/status", "/status.html"):
+            fn = globals().get("public_status_page")
+            page = fn() if callable(fn) else "<p>status unavailable</p>"
+            self._send(200, page.encode("utf-8"))
+            return
+        if path == "/status.json":
+            fn = globals().get("public_status")
+            self._json(200, fn() if callable(fn) else {"ok": False, "error": "extras not loaded"})
+            return
         authed = self._auth()
         if path in ("/", "/index.html"):
             extra = None
@@ -1329,6 +1338,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(501, {"ok": False, "error": "extras not loaded"})
                 return
             self._json(200, fn())
+            return
+        if path == "/api/delete-queue":
+            fn = globals().get("read_delete_queue")
+            self._json(200, fn() if callable(fn) else {"items": []})
             return
         if path == "/api/world-objects":
             fn = globals().get("world_objects")
