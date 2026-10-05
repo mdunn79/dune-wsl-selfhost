@@ -33,6 +33,11 @@ a{color:var(--acc)}
 .ini-cat .row{margin:4px 0}
 .ini-hint{color:var(--muted);font-size:12px;margin-left:6px}
 .ini-file{color:var(--muted);font-size:11px;min-width:4.5em;display:inline-block}
+#drylab.dryon{color:var(--acc)}
+.warn{background:#3a201c;border:1px solid var(--bad);padding:8px 10px;border-radius:6px;margin:0 0 10px}
+.notice{background:#2a261f;border:1px solid var(--acc);padding:8px 10px;border-radius:6px;margin:0 0 10px}
+.ini-drift input{border-color:var(--acc)}
+.ovsvg{background:#0e0d0b;border:1px solid #2a261f;border-radius:6px;display:block;width:100%;max-width:440px;height:260px}
 </style>
 </head>
 <body>
@@ -47,11 +52,15 @@ a{color:var(--acc)}
   <h1>Dune admin</h1>
   <span id="joinpill" class="pill">…</span>
   <label class="muted"><input type="checkbox" id="autoref" checked/> Auto-refresh</label>
+  <label id="drylab" class="muted" title="When checked, GM tools, broadcast, restart, apply, and advertise return a preview and are not sent to the world."><input type="checkbox" id="dryrun" checked/> Dry-run (nothing sent to the world)</label>
   <nav>
     <button data-tab="world" class="on">World</button>
     <button data-tab="players">Players</button>
     <button data-tab="char">Character</button>
     <button data-tab="tools">Tools</button>
+    <button data-tab="bases">Bases</button>
+    <button data-tab="vehicles">Vehicles</button>
+    <button data-tab="social">Social</button>
     <button data-tab="settings">Settings</button>
     <button data-tab="logs">Logs</button>
     <button data-tab="audit">Audit</button>
@@ -61,6 +70,7 @@ a{color:var(--acc)}
 <section id="world" class="tab">
   <div class="card" id="worldcard">Loading…</div>
   <div class="card">
+    <p class="muted">Public world: Start / Stop / Restart / Apply depot / Advertise can disconnect players or roll maps. Leave them alone unless you intend downtime.</p>
     <div class="row">
       <button class="act" data-op="start">Start</button>
       <button class="act bad" data-op="stop" data-confirm="Stop the battlegroup? Players will be kicked.">Stop</button>
@@ -107,10 +117,11 @@ a{color:var(--acc)}
       <button class="act" id="bshut">Restart countdown (10 min)</button>
       <button class="act" id="bcancel">Cancel shutdown notice</button>
     </p>
+    <p class="muted">Broadcast is a <b>title-card popup</b> in-game (not chat), ~30s, top of the HUD. Dry-run must be unchecked. Restart countdown is a shutdown warning — skip it unless you mean that.</p>
   </div>
   <div class="card">
     <label><input type="checkbox" id="wlenable"/> Enforce whitelist (kick anyone not listed)</label>
-    <p class="muted">Ban is local JSON + kick. Optional hours = temp ban. Notes stay on this host.</p>
+    <p class="muted">Ban is local JSON + kick. Optional hours = temp ban. Notes stay on this host. Click <b>Use</b> on the row with your <b>character name</b>. Most people have an FLS hex; the world-owner account on this host shows a Funcom id (<code>name#digits</code>) because Funcom stored the world HostId in that account’s user field. Never paste the HostId into Tools.</p>
     <div id="plist">Loading…</div>
   </div>
 </section>
@@ -123,17 +134,30 @@ a{color:var(--acc)}
 </section>
 <section id="tools" class="tab" hidden>
   <div class="card">
-    <p class="muted">Target must be <b>online</b> for live GM commands.</p>
+    <p class="muted">Target must be <b>online</b> for live GM commands. Click <b>Use</b> on your Players row (Funcom <code>name#digits</code> is fine). Grants send Funcom’s <code>accounts.user</code> FLS internally — do not paste the world HostId. Header <b>Dry-run</b> must be unchecked before grants go to the world. Locate can stay on Dry-run. Item search uses the wiki cache plus FNames already in this world (Calibrated servok, Silicone block, or a raw FName).</p>
     <div class="row">
-      <label>Player id <input id="tid" size="36"/></label>
+      <label>Confirm phrase <input id="gmphrase" placeholder="WIPE / RESET / DC / DELETE" style="width:14em"/></label>
+    </div>
+    <div class="row">
+      <label>Player id <input id="tid" size="36" placeholder="FLS hex or Funcom name#id"/></label>
       <label>Teleport onto <input id="toid" placeholder="other FLS id" size="28"/></label>
       <button class="act" id="tpto">Teleport to player</button>
     </div>
     <div class="row">
-      <label>Item <input id="item" list="items" placeholder="search or FName"/></label>
+      <label>Item <input id="item" list="items" placeholder="Calibrated servok or FName"/></label>
       <datalist id="items"></datalist>
       <label>Qty <input id="qty" type="number" value="1" style="width:5em"/></label>
       <button class="act" id="grant">Grant item</button>
+    </div>
+    <div class="card" style="margin:10px 0 0;padding:10px">
+      <h3 style="margin:0 0 6px">Item catalog</h3>
+      <p class="muted">awakening.wiki cache merged with <code>DISTINCT dune.items.template_id</code> on this world. Schematics / recipes / patents are filtered from the wiki dump. Not cooked paks. SQL stack edit is not offered — grant more instead.</p>
+      <div class="row">
+        <input id="catq" placeholder="Search silicone, servok, FName" style="min-width:18em"/>
+        <button class="act" id="catref">Refresh wiki cache</button>
+        <span id="catmeta" class="muted"></span>
+      </div>
+      <div id="cathits"></div>
     </div>
     <div class="row">
       <label>XP <input id="xp" type="number" value="1000" style="width:7em"/></label>
@@ -155,7 +179,9 @@ a{color:var(--acc)}
       <label>Z <input id="z" style="width:7em"/></label>
       <button class="act" id="locate">Read location</button>
       <button class="act" id="tp">Teleport (safe snap)</button>
+      <button class="act bad" id="tpoff">Offline-move fallback</button>
     </div>
+    <p class="muted">Offline-move is only if they are already offline and TeleportTo no-ops. Type <code>DC</code> in Confirm phrase. It will not kick them and will not UDP-drop. Maps still own live pawns.</p>
     <div class="row">
       <label>Vehicle
         <select id="veh">
@@ -175,10 +201,56 @@ a{color:var(--acc)}
     </div>
   </div>
 </section>
+<section id="bases" class="tab" hidden>
+  <div class="card">
+    <h3 style="margin:0 0 8px">Bases / blueprints / backups</h3>
+    <p class="muted">Read-only Postgres listing. Queue is a reminder only — this panel will not SQL-DELETE live objects (maps overwrite mute DELETEs).</p>
+    <div id="baselist">Open this tab to load.</div>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 8px">Delete queue</h3>
+    <p class="muted">Local JSON on this host. Apply is refused until a Funcom procedure is proven. Type DELETE in Confirm phrase to try Apply (it will still refuse live DML).</p>
+    <div id="dellist">Open Bases to load.</div>
+    <p class="row"><button class="act bad" id="delapply">Apply queued deletes</button></p>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 8px">Orphaned owners</h3>
+    <p class="muted">Owners of bases or vehicles with no last-seen on this world, a deleted character, unowned world objects, or a leftover id with no matching player_state. Funcom often leaves `buildings.owner_id` null; this list uses placement/rank joins instead.</p>
+    <div id="orphanlist">Open this tab to load.</div>
+  </div>
+</section>
+<section id="vehicles" class="tab" hidden>
+  <div class="card">
+    <h3 style="margin:0 0 8px">Vehicles</h3>
+    <p class="muted">Read-only. Spawn-from-Tools is a separate live command (blocked while Dry-run is checked).</p>
+    <div id="vehlist">Open this tab to load.</div>
+  </div>
+</section>
+<section id="social" class="tab" hidden>
+  <div class="card">
+    <h3 style="margin:0 0 8px">CHOAM</h3>
+    <p class="muted">Read-only exchange listings. Empty is normal until someone (or an NPC vendor) posts an order.</p>
+    <div id="choamlist">Open this tab to load.</div>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 8px">Guilds</h3>
+    <div id="guildlist">Open this tab to load.</div>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 8px">Landsraad</h3>
+    <div id="lrlist">Open this tab to load.</div>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 8px">Solari</h3>
+    <p class="muted">Carried is <code>SolarisCoin</code> on the pawn. Bank is CHOAM exchange balance when that row exists.</p>
+    <div id="solarilist">Open this tab to load.</div>
+  </div>
+</section>
 <section id="settings" class="tab" hidden>
   <div class="card">
     <h3 style="margin:0 0 8px">Rates / world INI</h3>
-    <p class="muted">Writes File Browser UserSettings and Funcom setup/config. Save, then <b>Apply UserSettings</b>, then <b>restart maps</b> (rates do not hot-reload). Durability drain is wear; max-durability loss is the repair tax.</p>
+    <p class="muted">Writes File Browser UserSettings and Funcom setup/config. Save, then <b>Apply UserSettings</b>, then <b>restart maps</b> (rates do not hot-reload). Apply and restart take the public world down — skip them unless you intend downtime. Durability drain is wear; max-durability loss is the repair tax.</p>
+    <div id="inidrift"></div>
     <div id="inikeys"></div>
     <p class="row">
       <button class="act" id="inisave">Save INIs</button>
@@ -196,11 +268,30 @@ a{color:var(--acc)}
       <label>Discord webhook <input id="whurl" type="password" placeholder="https://discord.com/api/webhooks/…" style="min-width:22em"/></label>
       <span class="muted" id="whhost"></span>
     </div>
+    <p class="muted">Discord posts join/leave and maps that leave Ready. Uncheck to silence a kind. Restart defer postpones World Restart and the scheduled restart while anyone is online.</p>
+    <div class="row">
+      <label><input type="checkbox" id="pjoin" checked/> Discord join</label>
+      <label><input type="checkbox" id="pleave" checked/> Discord leave</label>
+      <label><input type="checkbox" id="pmaps" checked/> Discord maps not Ready</label>
+      <label><input type="checkbox" id="pdefer" checked/> Defer restart if anyone is online</label>
+    </div>
     <p class="row">
-      <button class="act" id="cfgsave">Save kit / webhook</button>
+      <button class="act" id="cfgsave">Save kit / webhook / presence</button>
       <button class="act bad" id="rottok">Rotate admin token</button>
     </p>
     <p id="newtok" class="ok"></p>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 8px">GM gates</h3>
+    <p class="muted">Unchecked tools refuse even if Dry-run is off. Wipe/reset still need the confirm phrase.</p>
+    <div class="row">
+      <label><input type="checkbox" id="ggrants"/> Grants (items / XP / skills / water / welcome)</label>
+      <label><input type="checkbox" id="gwipe"/> Wipe inventory</label>
+      <label><input type="checkbox" id="greset"/> Reset progression</label>
+      <label><input type="checkbox" id="gtp"/> Teleport</label>
+      <label><input type="checkbox" id="gveh"/> Spawn vehicle</label>
+    </div>
+    <p class="row"><button class="act" id="gatesave">Save gates</button></p>
   </div>
 </section>
 <section id="logs" class="tab" hidden>
@@ -229,6 +320,9 @@ function show(id){
   if (id==='audit') loadAudit();
   if (id==='settings') loadSettings();
   if (id==='world') loadBackups();
+  if (id==='bases') { loadBases(); loadDeleteQueue(); }
+  if (id==='vehicles') loadVehicles();
+  if (id==='social') loadSocial();
 }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => show(b.dataset.tab));
 function token(){ return sessionStorage.getItem('dune_admin_tok') || ''; }
@@ -246,6 +340,31 @@ async function api(path, body){
   try { return JSON.parse(t); } catch { return {ok:false, error:t}; }
 }
 function out(x){ $('#out').textContent = typeof x==='string'?x:JSON.stringify(x,null,2); }
+function gmBody(body){
+  body.dry_run = !!( $('#dryrun') && $('#dryrun').checked );
+  const phrase = ($('#gmphrase') && $('#gmphrase').value) || '';
+  if (phrase.trim()) body.confirm_text = phrase.trim();
+  return body;
+}
+function syncDry(){
+  const on = !!( $('#dryrun') && $('#dryrun').checked );
+  sessionStorage.setItem('dune_admin_dryrun', on ? '1' : '0');
+  if ($('#drylab')) $('#drylab').classList.toggle('dryon', on);
+}
+async function gm(body){
+  const d = await api('/api/action', gmBody(body));
+  out(d);
+  if (d.player && d.player.ok && body.player_id){
+    $('#cid').value = body.player_id;
+  }
+  return d;
+}
+function fmtTs(ts){
+  if (!ts) return '';
+  const n = Number(ts);
+  if (!n) return String(ts);
+  return new Date(n*1000).toLocaleString();
+}
 $('#lf').onsubmit = async (e)=>{
   e.preventDefault();
   sessionStorage.setItem('dune_admin_tok', $('#tok').value.trim());
@@ -253,13 +372,64 @@ $('#lf').onsubmit = async (e)=>{
   if (!r.ok){ $('#le').textContent='Bad token'; return; }
   location.reload();
 };
+function fillCatalog(cat){
+  CATALOG = cat || {items:[], skills:[]};
+  const dl = $('#items'), sm = $('#smod');
+  if (dl){
+    dl.innerHTML = '';
+    (CATALOG.items||[]).forEach(i=>{
+      const o=document.createElement('option');
+      o.value = i[0]+' — '+i[1];
+      dl.appendChild(o);
+    });
+  }
+  if (sm && !sm.dataset.filled){
+    (CATALOG.skills||[]).forEach(s=>{ const o=document.createElement('option'); o.value=s; o.textContent=s; sm.appendChild(o); });
+    sm.dataset.filled = '1';
+  }
+  const m = CATALOG.meta || {};
+  if ($('#catmeta')){
+    const when = m.cached_ts ? ('cache '+fmtTs(m.cached_ts)) : 'no wiki cache yet';
+    $('#catmeta').textContent = (m.total||0)+' grantable · wiki '+(m.wiki||0)+' · world '+(m.world||0)+' · '+when+(m.fetching?' · fetching…':'');
+  }
+  renderCatHits();
+}
+function renderCatHits(){
+  const box = $('#cathits');
+  if (!box) return;
+  const q = (($('#catq')||{}).value||'').trim().toLowerCase();
+  let rows = CATALOG.items||[];
+  if (q) rows = rows.filter(i => String(i[0]||'').toLowerCase().includes(q) || String(i[1]||'').toLowerCase().includes(q));
+  const shown = rows.slice(0, 40);
+  box.innerHTML = `<table><thead><tr><th>Name</th><th>FName</th><th></th><th></th></tr></thead><tbody>${
+    shown.map(i=>`<tr><td>${esc(i[0])}</td><td><code>${esc(i[1])}</code></td><td class="muted">${esc(i[2]||'')}</td>
+      <td><button class="act" data-useitem="${esc(i[1])}" data-usename="${esc(i[0])}">Use</button></td></tr>`).join('')
+    || '<tr><td colspan=4 class="muted">no matches</td></tr>'
+  }</tbody></table>${rows.length>40?`<p class="muted">${rows.length} matches, showing 40. Narrow the search.</p>`:''}`;
+}
 async function boot(){
   const r = await fetch('/api/status', {headers:{'X-Admin-Token': token()}});
   if (r.status === 401){ $('#login').hidden=false; return; }
   $('#app').hidden=false;
+  const savedDry = sessionStorage.getItem('dune_admin_dryrun');
+  if ($('#dryrun')){
+    if (savedDry === '0') $('#dryrun').checked = false;
+    else $('#dryrun').checked = true;
+    $('#dryrun').onchange = syncDry;
+    syncDry();
+  }
   CATALOG = await api('/api/catalog');
-  (CATALOG.items||[]).forEach(i=>{ const o=document.createElement('option'); o.value=i[1]; o.label=i[0]; $('#items').appendChild(o); });
-  (CATALOG.skills||[]).forEach(s=>{ const o=document.createElement('option'); o.value=s; o.textContent=s; $('#smod').appendChild(o); });
+  fillCatalog(CATALOG);
+  if (!(CATALOG.meta||{}).wiki || (CATALOG.meta||{}).fetching){
+    (async ()=>{
+      for (let i=0;i<25;i++){
+        await new Promise(r=>setTimeout(r, 2000));
+        fillCatalog(await api('/api/catalog'));
+        const m = CATALOG.meta||{};
+        if (m.wiki>0 && !m.fetching) break;
+      }
+    })();
+  }
   renderWorld(await r.json());
   renderPlayers();
   loadBackups();
@@ -268,12 +438,40 @@ async function boot(){
 async function refresh(){
   renderWorld(await api('/api/status'));
   if (!$('#players').hidden) renderPlayers();
+  if ($('#bases') && !$('#bases').hidden) loadBases();
+  if ($('#vehicles') && !$('#vehicles').hidden) loadVehicles();
+  if ($('#social') && !$('#social').hidden) loadSocial();
+}
+function svgMap(title, dots){
+  if (!dots.length) return `<p class="muted">${esc(title)}: no pawn dots</p>`;
+  const xs = dots.map(d=>Number(d.x)), ys = dots.map(d=>Number(d.y));
+  const minX=Math.min(...xs), maxX=Math.max(...xs), minY=Math.min(...ys), maxY=Math.max(...ys);
+  const span = Math.max(maxX-minX, maxY-minY, 1000);
+  const pad = span * 0.12;
+  const w = 420, h = 240;
+  const sx = x => ((x-minX+pad)/(maxX-minX+2*pad))*w;
+  const sy = y => h - ((y-minY+pad)/(maxY-minY+2*pad))*h;
+  const pts = dots.map(d => {
+    const cx = sx(Number(d.x)).toFixed(1), cy = sy(Number(d.y)).toFixed(1);
+    const fill = d.online ? '#7aa36a' : '#9a907e';
+    return `<circle cx="${cx}" cy="${cy}" r="5" fill="${fill}"><title>${esc(d.name||d.player_id)}</title></circle>
+      <text x="${(+cx+7).toFixed(1)}" y="${(+cy+4).toFixed(1)}" fill="#e8e0d0" font-size="11">${esc(d.name||'')}</text>`;
+  }).join('');
+  return `<div><b>${esc(title)}</b> <span class="muted">${dots.length}</span>
+    <svg class="ovsvg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${pts}</svg></div>`;
 }
 function renderWorld(st){
   const j = st.joinable;
   $('#joinpill').textContent = j ? 'joinable' : 'not joinable';
   $('#joinpill').style.color = j ? 'var(--ok)' : 'var(--bad)';
-  const maps = (st.maps||[]).map(m => `<tr><td>${esc(m.kind)}</td><td>${esc(m.name)}</td><td>${esc(m.phase)}</td><td>${m.ready?'ready':'not ready'} ${esc(m.ready_col||'')}</td></tr>`).join('');
+  const bg = st.battlegroup || {};
+  const maps = (st.maps||[]).map(m => {
+    const blob = String(m.phase||'')+' '+String(m.ready_col||'')+' '+String(m.kind||'');
+    const modif = /modif/i.test(blob) || (m.kind==='Gateway' && !m.ready);
+    let label = m.ready ? 'ready' : (modif ? 'Modifying' : 'not ready');
+    const cls = m.ready ? 'ok' : 'bad';
+    return `<tr><td>${esc(m.kind)}</td><td>${esc(m.name)}</td><td>${esc(m.phase)}</td><td class="${cls}">${esc(label)} ${esc(m.ready_col||'')}</td></tr>`;
+  }).join('');
   const p = st.ports||{};
   const sm = st.steam||{};
   const h = st.health||{};
@@ -282,11 +480,40 @@ function renderWorld(st){
   const rem = (n.remotes||[]).map(x => `<tr><td>${esc(x.ip)}</td><td>${esc(x.kind)}</td><td>${x.count}</td></tr>`).join('');
   const notes = (st.join_notes||[]).join(' · ') || (j ? 'Survival, Overmap, and join ports are up' : '');
   const sch = st.schedule;
-  $('#rsnow').textContent = sch && sch.at ? ('Scheduled at ' + new Date(sch.at*1000).toLocaleString() + (sch.announced?' (countdown sent)':'')) : 'No restart scheduled';
+  $('#rsnow').textContent = sch && sch.at ? ('Scheduled at ' + new Date(sch.at*1000).toLocaleString() + (sch.announced?' (countdown sent)':'') + (sch.deferred?' (deferred: players online)':'')) : 'No restart scheduled';
+  const smeta = st.settings_meta || {};
+  const driftN = smeta.drift_count || 0;
+  const needR = smeta.maps_need_restart;
+  const driftBanner = (driftN || needR) ? `<div class="${needR?'warn':'notice'}">${
+    driftN ? (driftN + ' INI key(s) differ between File Browser and setup/config') : ''
+  }${driftN && needR ? ' · ' : ''}${
+    needR ? ('UserSettings applied ' + esc(fmtTs(smeta.last_apply_ts)) + ' — maps still need a restart to load rates (do not restart unless you intend downtime)') : ''
+  }</div>` : '';
+  const gwBanner = bg.modifying ? `<div class="warn">Gateway / battlegroup Modifying — Survival/Overmap may not be Ready</div>` : '';
+  const bgServers = (bg.servers||[]).map(s => `<tr><td>${esc(s.map)}</td><td>${esc(s.phase)}</td><td>${s.ready?'<span class="ok">Ready</span>':'<span class="bad">not Ready</span>'}</td><td>${esc(s.restarts)}</td></tr>`).join('');
+  const ov = st.overview || {};
+  const dots = ov.dots || [];
+  const hagga = dots.filter(d => d.source !== 'overmap' && !/overmap/i.test(String(d.map||'')));
+  const over = dots.filter(d => d.source === 'overmap' || /overmap/i.test(String(d.map||'')));
   $('#worldcard').innerHTML = `
+    ${driftBanner}${gwBanner}
     <p><b>${esc(st.bg||'no battlegroup')}</b> <span class="muted">${esc(st.ns||'')}</span></p>
     <p>${st.updating ? '<span class="bad">Steam/maintain running</span>' : '<span class="ok">Not updating</span>'} · ${esc(notes)}</p>
-    <p>Steam local <code>${esc(sm.local||'?')}</code> · public <code>${esc(sm.public||'?')}</code> · ${sm.update_available?'<span class="bad">update available</span>':'in sync'}</p>
+    <div class="grid">
+      <div class="card" style="margin:0"><b>Steam</b>
+        <p>installed <code>${esc(sm.local||'?')}</code> · public <code>${esc(sm.public||'?')}</code><br>
+        ${sm.update_available?'<span class="bad">update available</span>':'in sync'}<br>
+        <span class="muted">last check ${esc(fmtTs(sm.checked_ts)||'never')} · depot mtime ${esc(fmtTs(sm.installed_ts)||'?')}</span></p>
+      </div>
+      <div class="card" style="margin:0"><b>Battlegroup</b>
+        <p>phase <b>${esc(bg.phase||'?')}</b> · group ${esc(bg.server_group_phase||'?')}<br>
+        Gateway ${esc(bg.gateway_phase||'?')} · ${bg.modifying?'<span class="bad">Modifying</span>':'<span class="ok">not modifying</span>'}</p>
+      </div>
+      <div class="card" style="margin:0"><b>Listing</b>
+        <p>title (Funcom CR) <b>${esc(bg.title||st.bg||'?')}</b><br>
+        <span class="muted">subtitle is Settings → Listing → Bgd.ServerDisplayName (commented = unused)</span></p>
+      </div>
+    </div>
     <p>WSL reclaim <b>${esc(h.wsl_reclaim||'?')}</b> · ${esc(h.mem||'')} · disk ${esc(h.disk||'')}</p>
     <p>Rubberband TimeStamp expired (15m): <b>${n.expired_15m||0}</b></p>
     <p>Characters ${st.player_count_roster||0} · online ${st.player_count_known||0}</p>
@@ -294,25 +521,36 @@ function renderWorld(st){
        Director 31519 ${p.director_31519?'<span class="ok">up</span>':'<span class="bad">down</span>'} ·
        File Browser ${p.filebrowser_18888?'<span class="ok">up</span>':'<span class="muted">down</span>'}</p>
     <p><a href="${esc(st.filebrowser)}" target="_blank" rel="noopener">File Browser</a> ·
-       <a href="${esc(st.director)}" target="_blank" rel="noopener">Director</a></p>
+       <a href="${esc(st.director)}" target="_blank" rel="noopener">Director</a> ·
+       <a href="/status" target="_blank" rel="noopener">Public status (no token)</a></p>
     <pre>${esc(st.advertise||'')}</pre>
     <div class="grid">
+      ${svgMap('Hagga / Survival', hagga)}
+      ${svgMap('Overmap', over)}
+    </div>
+    <div class="grid">
       <div><b>Maps</b><table><thead><tr><th>Map</th><th>Pod</th><th>Phase</th><th></th></tr></thead><tbody>${maps||'<tr><td colspan=4>none</td></tr>'}</tbody></table></div>
+      <div><b>CR servers</b><table><thead><tr><th>Partition</th><th>Phase</th><th></th><th>Restarts</th></tr></thead><tbody>${bgServers||'<tr><td colspan=4>none</td></tr>'}</tbody></table></div>
       <div><b>Resources</b><table><thead><tr><th>Pod</th><th>Ready</th><th>Restarts</th><th>CPU</th><th>RAM</th></tr></thead><tbody>${pods||'<tr><td colspan=5>n/a</td></tr>'}</tbody></table></div>
     </div>
-    <p><b>Join path</b></p>
-    <table><thead><tr><th>RemoteAddr</th><th>Kind</th><th>Hits</th></tr></thead><tbody>${rem||'<tr><td colspan=3>no clients in last 15m</td></tr>'}</tbody></table>`;
+    <p><b>Join path</b> <span class="muted">(Survival LogNet RemoteAddr, up to 2h — connect/error lines, not a live roster)</span></p>
+    <table><thead><tr><th>RemoteAddr</th><th>Kind</th><th>Hits</th></tr></thead><tbody>${rem||((st.player_count_known)
+      ? `<tr><td colspan=3 class="muted">No RemoteAddr log lines lately. Unreal often logs none during a stable session. Players shows ${st.player_count_known} online.</td></tr>`
+      : `<tr><td colspan=3 class="muted">No RemoteAddr log lines in recent Survival logs</td></tr>`)}</tbody></table>`;
 }
 async function renderPlayers(){
   const d = await api('/api/players');
   $('#wlenable').checked = !!(d.whitelist||{}).enabled;
-  const q = ($('#pfilt').value||'').toLowerCase();
+  let q = ($('#pfilt').value||'').toLowerCase();
+  const hid = String(d.world_host_id||'').toLowerCase();
+  const hidFilter = !!(q && hid && q.replace(/-/g,'') === hid);
+  if (hidFilter) q = '';
   const rows = (d.players||[]).filter(p => !q || (p.name||'').toLowerCase().includes(q) || (p.player_id||'').toLowerCase().includes(q)).map(p => `<tr>
     <td><code>${esc(p.player_id||'')}</code></td>
     <td>${esc(p.name||'')}</td>
     <td>${p.online?'<span class="ok">online</span>':'<span class="muted">offline</span>'}</td>
     <td>${p.banned?'<span class="bad">ban</span>':''} ${p.whitelisted?'wl':''}</td>
-    <td>${(p.last_seen||'').trim()?esc(p.last_seen):'<span class="muted">never</span>'}${p.transferred?' <span class="muted">xfer</span>':''}</td>
+    <td>${(p.last_seen||'').trim()?esc(p.last_seen):'<span class="muted">never</span>'}${p.transferred?' <span class="muted">xfer</span>':''}${p.first_seen?'<br><span class="muted">first '+esc(fmtTs(p.first_seen))+'</span>':''}</td>
     <td>${esc(p.note||'')}</td>
     <td>
       <button class="act" data-use="${esc(p.player_id)}">Use</button>
@@ -324,7 +562,8 @@ async function renderPlayers(){
     </td>
   </tr>`).join('');
   $('#plist').innerHTML = (d.error?`<p class="bad">${esc(d.error)}</p>`:'') +
-    `<table><thead><tr><th>FLS</th><th>Character</th><th></th><th></th><th>Last seen here</th><th>Note</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan=7>No characters</td></tr>'}</tbody></table>
+    (hidFilter ? `<p class="notice">The filter was the world HostId, not a player. Showing everyone — clear the box and click Use on your character name.</p>` : '') +
+    `<table><thead><tr><th>Player id</th><th>Character</th><th></th><th></th><th>Last seen here</th><th>Note</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan=7>No characters</td></tr>'}</tbody></table>
      <p class="row"><label>Ban hours (empty = until unban) <input id="banhrs" type="number" style="width:6em"/></label>
      <label>Note <input id="pnote" style="min-width:16em"/></label>
      <button class="act" id="savenote">Save note for Use id</button></p>`;
@@ -337,7 +576,11 @@ async function loadChar(id){
   const d = await api('/api/player?id='+encodeURIComponent(id));
   if (!d.ok){ $('#cdetail').innerHTML = `<p class="bad">${esc(d.error||'not found')}</p>`; return; }
   const p = d.player||{};
-  const inv = (d.inventory||[]).map(i=>`<tr><td>${esc(i.template_id)}</td><td>${esc(i.qty)}</td><td>${esc(i.quality)}</td><td>${esc(i.inv)}</td></tr>`).join('');
+  const inv = (d.inventory||[]).map(i=>`<tr>
+    <td>${esc(i.name||i.template_id)}<div class="muted">${esc(i.template_id)}</div></td>
+    <td>${esc(i.qty)}</td><td>${esc(i.quality)}</td><td>${esc(i.inv)}</td>
+    <td><button class="act" data-useitem="${esc(i.template_id)}" data-usename="${esc(i.name||i.template_id)}">Use</button></td>
+  </tr>`).join('');
   const g = (d.guilds||[]).map(x=>`${esc(x.name)} (${esc(x.role)})`).join(', ') || 'none';
   const cur = (d.currency||[]).map(x=>`${esc(x.id)}=${esc(x.balance)}`).join(', ') || 'none';
   const bases = (d.bases||[]).map(b=>`<tr><td>${esc(b.id)}</td><td>${esc(b.map||b.backup||'')}</td></tr>`).join('');
@@ -354,7 +597,7 @@ async function loadChar(id){
     <p><b>${esc(p.name)}</b> · ${(d.mentors||[]).map(esc).join(', ') || 'no mentor'} ·
        caste ${(d.castes||[]).map(esc).join(', ') || '?'} · ${esc(v.map||p.map||'')} ·
        ${esc(p.life_state||'')} / ${esc(p.online_status)} · ${esc(p.platform||'')}</p>
-    <p>FLS <code>${esc(p.fls_id)}</code> · controller ${esc(p.controller_id)} · last seen here ${(p.last_seen||'').trim()?esc(p.last_seen):'<span class="muted">never on this world</span>'}${p.transferred?(' · transferred · origin last login '+esc(p.last_login||'')):''}</p>
+    <p>FLS <code>${esc(p.fls_id)}</code> · controller ${esc(p.controller_id)} · last seen here ${(p.last_seen||'').trim()?esc(p.last_seen):'<span class="muted">never on this world</span>'}${p.transferred?(' · transferred · origin last login '+esc(p.last_login||'')):''}${d.first_seen?(' · first seen '+esc(fmtTs(d.first_seen))):''}</p>
     <p>Health ${esc(v.health)}/${esc(v.health_max)} · water ${esc(v.hydration)} · spice ${esc(v.spice)}
        · heat ${esc(v.heat)} ${v.heatstroke?'<span class="bad">heatstroke</span>':''}
        · Eyes of Ibad ${esc(v.eyes_of_ibad)}%</p>
@@ -363,13 +606,14 @@ async function loadChar(id){
     <p>Tracked journey: ${esc(jn.journey||'none')} ${jn.landsraad?('· Landsraad '+esc(jn.landsraad)):''}</p>
     <p>Faction standing: ${rep} · guilds: ${g} · NPE ${d.npe_done?'done':'not done'} · contracts completed ${d.contracts_done||0}</p>
     <p>POIs: ${(d.pois||[]).map(esc).join(', ') || 'none'} · respawns: ${rsp}</p>
-    <p>Currency: ${cur}</p>
+    <p>Currency: ${cur} · Solari carried ${esc((d.solari||{}).carried||'0')} / bank ${esc((d.solari||{}).bank||'0')}</p>
     <p>Note: ${esc(d.note||'')}</p>
     <p>Loc ${esc(loc)}</p>
     <div class="grid">
       <div><b>Specialization tracks</b>${tr?`<table><thead><tr><th>Track</th><th>Level</th><th>XP</th></tr></thead><tbody>${tr}</tbody></table>`:'<p class="muted">None stored yet (Dune has no single character level; Combat/Gathering/etc. fill in after XP lands).</p>'}
           <b>Intel / recipes</b><table><thead><tr><th>Unlock</th><th></th></tr></thead><tbody>${rec||'<tr><td colspan=2>none</td></tr>'}</tbody></table></div>
-      <div><b>Inventory (template ids)</b><table><thead><tr><th>Item</th><th>Qty</th><th>Q</th><th>Inv</th></tr></thead><tbody>${inv||'<tr><td colspan=4>empty / pawn not linked</td></tr>'}</tbody></table>
+      <div><b>Inventory</b><p class="muted">Labels from wiki/seed/world. Qty is read-only — this panel will not SQL-UPDATE stacks.</p>
+          <table><thead><tr><th>Item</th><th>Qty</th><th>Q</th><th>Inv</th><th></th></tr></thead><tbody>${inv||'<tr><td colspan=5>empty / pawn not linked</td></tr>'}</tbody></table>
           <b>Blueprints / backups</b><table>${bases||'<tr><td>none</td></tr>'}</table>
           <b>Landsraad</b><table>${lr||'<tr><td>none</td></tr>'}</table></div>
     </div>`;
@@ -387,16 +631,24 @@ async function loadAudit(){
 }
 async function loadSettings(){
   const s = await api('/api/settings');
-  const openCats = new Set(['Durability','Harvesting','Combat','Survival']);
+  const openCats = new Set(['Durability','Harvesting','Combat','Survival','Pings','Listing']);
   const fileShort = { 'UserServerCustomSettings.ini':'custom', 'UserGame.ini':'game', 'UserEngine.ini':'engine' };
   const cats = [];
   for (const k of (s.keys||[])){
     if (!cats.includes(k.cat)) cats.push(k.cat);
   }
+  const driftN = s.drift_count || 0;
+  const needR = s.maps_need_restart;
+  $('#inidrift').innerHTML = (driftN || needR) ? `<div class="${needR?'warn':'notice'}">${
+    driftN ? (driftN + ' key(s) differ File Browser vs setup/config (amber outline).') : ''
+  }${driftN && needR ? ' ' : ''}${
+    needR ? ('Last apply ' + esc(fmtTs(s.last_apply_ts)) + (s.last_restart_ts?'; last map restart '+esc(fmtTs(s.last_restart_ts)):'') + '. Rates are not live until maps restart.') : ''
+  }</div>` : '<p class="muted">File Browser and setup/config match for the keys this panel knows.</p>';
   $('#inikeys').innerHTML = cats.map(cat => {
-    const rows = (s.keys||[]).filter(k => k.cat===cat).map(k => `<div class="row">
+    const rows = (s.keys||[]).filter(k => k.cat===cat).map(k => `<div class="row${k.drift?' ini-drift':''}">
       <label style="min-width:26em"><span class="ini-file">${esc(fileShort[k.file]||k.file)}</span>
-        <code>${esc(k.key)}</code>${k.hint?`<span class="ini-hint">${esc(k.hint)}</span>`:''}</label>
+        <code>${esc(k.key)}</code>${k.hint?`<span class="ini-hint">${esc(k.hint)}</span>`:''}
+        ${k.drift?`<span class="ini-hint">setup ${esc(k.setup_value)}</span>`:''}</label>
       <input data-ini="${esc(k.file)}" data-key="${esc(k.key)}" value="${esc(k.value)}" style="min-width:12em"/>
     </div>`).join('');
     return `<details class="ini-cat"${openCats.has(cat)?' open':''}><summary>${esc(cat)}</summary>${rows}</details>`;
@@ -405,14 +657,119 @@ async function loadSettings(){
   $('#wen').checked = !!(c.welcome||{}).enabled;
   $('#witems').value = ((c.welcome||{}).items||[]).map(i => (i.item||'') + ',' + (i.qty||1)).join('\n');
   $('#whhost').textContent = c.webhook_set ? ('set: ' + (c.webhook_host||'')) : 'not set';
+  const g = c.gates || s.gates || {};
+  if ($('#ggrants')) $('#ggrants').checked = g.grants !== false;
+  if ($('#gwipe')) $('#gwipe').checked = g.wipe_inventory !== false;
+  if ($('#greset')) $('#greset').checked = g.reset_progression !== false;
+  if ($('#gtp')) $('#gtp').checked = g.teleport !== false;
+  if ($('#gveh')) $('#gveh').checked = g.spawn_vehicle !== false;
+  const pr = c.presence || {};
+  if ($('#pjoin')) $('#pjoin').checked = pr.discord_join !== false;
+  if ($('#pleave')) $('#pleave').checked = pr.discord_leave !== false;
+  if ($('#pmaps')) $('#pmaps').checked = pr.discord_maps !== false;
+  if ($('#pdefer')) $('#pdefer').checked = pr.restart_defer_if_online !== false;
+}
+function objRows(items, extra){
+  return (items||[]).map(b => `<tr>
+    <td>${esc(b.kind||b.source||'')}</td>
+    <td><code>${esc(b.id||'')}</code></td>
+    <td>${esc(b.name||b.class_name||'')}</td>
+    <td>${esc(b.map||'')}</td>
+    <td>${esc(b.owner_name||'')}<br><code>${esc(b.owner_id||'')}</code></td>
+    <td>${(b.last_seen||'').trim()?esc(b.last_seen):'<span class="muted">never</span>'}${b.transferred?' <span class="muted">xfer</span>':''}</td>
+    <td>${b.orphan?'<span class="bad">'+esc(b.orphan_reason||'orphan')+'</span>':''}</td>
+    <td><button class="act" data-qkind="${esc(b.kind||'')}" data-qid="${esc(b.id||'')}" data-qname="${esc(b.name||'')}" data-qmap="${esc(b.map||'')}">Queue</button></td>
+  </tr>`).join('');
+}
+async function loadBases(){
+  const d = await api('/api/world-objects?kind=bases');
+  const o = await api('/api/world-objects?kind=orphans');
+  const rows = objRows(d.items);
+  $('#baselist').innerHTML = (d.error?`<p class="bad">${esc(d.error)}</p>`:'') +
+    `<p class="muted">${d.count||0} rows (cap 400 per table). SELECT only.</p>
+     <table><thead><tr><th>Kind</th><th>Id</th><th>Name</th><th>Map</th><th>Owner</th><th>Last seen here</th><th></th><th></th></tr></thead>
+     <tbody>${rows||'<tr><td colspan=8>none / table not present</td></tr>'}</tbody></table>`;
+  const orows = (o.items||[]).map(x => `<tr>
+    <td>${esc(x.owner_name||'')}<br><code>${esc(x.owner_id||'')}</code></td>
+    <td>${(x.last_seen||'').trim()?esc(x.last_seen):'<span class="muted">never</span>'}</td>
+    <td>${esc(x.reason||'')}</td>
+    <td>${x.bases||0}</td>
+    <td>${x.vehicles||0}</td>
+    <td><button class="act" data-char="${esc(x.owner_id||'')}">Sheet</button></td>
+  </tr>`).join('');
+  $('#orphanlist').innerHTML = `<table><thead><tr><th>Owner</th><th>Last seen</th><th>Why</th><th>Bases</th><th>Vehicles</th><th></th></tr></thead>
+    <tbody>${orows||'<tr><td colspan=6>none</td></tr>'}</tbody></table>`;
+}
+async function loadVehicles(){
+  const d = await api('/api/world-objects?kind=vehicles');
+  const rows = objRows(d.items);
+  $('#vehlist').innerHTML = (d.error?`<p class="bad">${esc(d.error)}</p>`:'') +
+    `<p class="muted">${d.count||0} rows (cap 400). SELECT only.</p>
+     <table><thead><tr><th>Kind</th><th>Id</th><th>Name</th><th>Map</th><th>Owner</th><th>Last seen here</th><th></th><th></th></tr></thead>
+     <tbody>${rows||'<tr><td colspan=8>none / table not present</td></tr>'}</tbody></table>`;
+}
+async function loadDeleteQueue(){
+  const d = await api('/api/delete-queue');
+  const rows = (d.items||[]).map(x => `<tr>
+    <td>${esc(x.kind)}</td><td><code>${esc(x.id)}</code></td><td>${esc(x.name)}</td><td>${esc(x.map)}</td>
+    <td><button class="act" data-unq="${esc(x.id)}">Remove</button></td>
+  </tr>`).join('');
+  if ($('#dellist')) $('#dellist').innerHTML =
+    `<table><thead><tr><th>Kind</th><th>Id</th><th>Name</th><th>Map</th><th></th></tr></thead>
+     <tbody>${rows||'<tr><td colspan=5 class="muted">empty</td></tr>'}</tbody></table>`;
+}
+async function loadSocial(){
+  const d = await api('/api/social');
+  const listings = (d.listings||[]).map(x => `<tr>
+    <td>${esc(x.exchange)}</td><td>${esc(x.item)}</td><td>${esc(x.price)}</td>
+    <td>${esc(x.seller_kind)}</td><td>${esc(x.seller)}</td><td>${esc(x.expires)}</td>
+  </tr>`).join('');
+  const ex = (d.exchanges||[]).map(x => esc(x.name||x.id)).join(', ') || 'none';
+  $('#choamlist').innerHTML = (d.error?`<p class="bad">${esc(d.error)}</p>`:'') +
+    `<p class="muted">${d.listing_count||0} listing(s). Exchanges: ${ex}. SELECT only.</p>
+     <table><thead><tr><th>Board</th><th>Item</th><th>Price</th><th></th><th>Seller</th><th>Expires</th></tr></thead>
+     <tbody>${listings||'<tr><td colspan=6 class="muted">No CHOAM orders yet</td></tr>'}</tbody></table>`;
+  const guilds = (d.guilds||[]).map(g => `<tr>
+    <td>${esc(g.name)}</td><td>${esc(g.faction)}</td><td>${esc(g.members)}</td><td>${esc(g.description)}</td>
+  </tr>`).join('');
+  const members = (d.members||[]).map(m => `<tr><td>${esc(m.guild)}</td><td>${esc(m.name)}</td><td>${esc(m.role)}</td></tr>`).join('');
+  const invites = (d.invites||[]).map(i => `<tr><td>${esc(i.guild)}</td><td>${esc(i.player)}</td><td>${esc(i.from)}</td></tr>`).join('');
+  $('#guildlist').innerHTML =
+    `<table><thead><tr><th>Guild</th><th>Faction</th><th>Members</th><th></th></tr></thead>
+     <tbody>${guilds||'<tr><td colspan=4>none</td></tr>'}</tbody></table>
+     <p class="muted">Members</p>
+     <table><thead><tr><th>Guild</th><th>Character</th><th>Role</th></tr></thead>
+     <tbody>${members||'<tr><td colspan=3>none</td></tr>'}</tbody></table>
+     <p class="muted">Invites</p>
+     <table><thead><tr><th>Guild</th><th>Player</th><th>From</th></tr></thead>
+     <tbody>${invites||'<tr><td colspan=3 class="muted">none</td></tr>'}</tbody></table>`;
+  const terms = (d.landsraad_terms||[]).map((t,i) => `<tr>
+    <td>${i===0?'<b>current</b>':''} ${esc(t.id)}</td><td>${esc(t.start)}</td><td>${esc(t.end)}</td>
+    <td>${esc(t.reigning)}</td><td>${esc(t.active_decree)}</td><td>${esc(t.winning)}</td>
+  </tr>`).join('');
+  const decrees = (d.decrees||[]).map(x => `<tr><td>${esc(x.id)}</td><td>${esc(x.name)}</td><td>${esc(x.enabled)}</td></tr>`).join('');
+  const tasks = (d.tasks||[]).map(x => `<tr><td>${esc(x.house)}</td><td>${esc(x.goal)}</td><td>${esc(x.state)}</td><td>${esc(x.winning)}</td></tr>`).join('');
+  $('#lrlist').innerHTML =
+    `<table><thead><tr><th>Term</th><th>Start</th><th>End</th><th>Reigning</th><th>Active decree</th><th>Winning</th></tr></thead>
+     <tbody>${terms||'<tr><td colspan=6>none</td></tr>'}</tbody></table>
+     <p class="muted">Decrees</p>
+     <table><thead><tr><th>Id</th><th>Name</th><th></th></tr></thead>
+     <tbody>${decrees||'<tr><td colspan=3>none</td></tr>'}</tbody></table>
+     <p class="muted">Current-term tasks</p>
+     <table><thead><tr><th>House</th><th>Goal</th><th></th><th>Winning</th></tr></thead>
+     <tbody>${tasks||'<tr><td colspan=4>none</td></tr>'}</tbody></table>`;
+  const sol = (d.solari||[]).map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.carried)}</td><td>${esc(x.bank)}</td></tr>`).join('');
+  $('#solarilist').innerHTML =
+    `<table><thead><tr><th>Character</th><th>Carried</th><th>Bank</th></tr></thead>
+     <tbody>${sol||'<tr><td colspan=3 class="muted">No SolarisCoin / no CHOAM bank rows</td></tr>'}</tbody></table>`;
 }
 document.body.addEventListener('click', async (e)=>{
   const t = e.target;
-  if (t.dataset.op){
+    if (t.dataset.op){
     const body = {op:t.dataset.op};
     if (t.dataset.confirm && !confirm(t.dataset.confirm)) return;
     if (t.dataset.confirm) body.confirm = true;
-    out(await api('/api/action', body));
+    out(await api('/api/action', gmBody(body)));
     renderWorld(await api('/api/status'));
     if (t.dataset.op==='backup') loadBackups();
   }
@@ -421,12 +778,25 @@ document.body.addEventListener('click', async (e)=>{
     $('#logbox').textContent = d.text || d.error || '';
   }
   if (t.dataset.use){ $('#tid').value = t.dataset.use; $('#cid').value = t.dataset.use; show('tools'); }
+  if (t.dataset.useitem){
+    const label = (t.dataset.usename||'') + (t.dataset.usename ? ' — ' : '') + t.dataset.useitem;
+    if ($('#item')) $('#item').value = label;
+    show('tools');
+  }
   if (t.dataset.char){ show('char'); loadChar(t.dataset.char); }
-  if (t.dataset.kick){ out(await api('/api/action',{op:'kick',player_id:t.dataset.kick})); renderPlayers(); }
+  if (t.dataset.qid){
+    out(await api('/api/action',{op:'queue-delete', kind:t.dataset.qkind, id:t.dataset.qid, name:t.dataset.qname, map:t.dataset.qmap}));
+    loadDeleteQueue();
+  }
+  if (t.dataset.unq){
+    out(await api('/api/action',{op:'unqueue-delete', id:t.dataset.unq}));
+    loadDeleteQueue();
+  }
+  if (t.dataset.kick){ out(await api('/api/action', gmBody({op:'kick',player_id:t.dataset.kick}))); renderPlayers(); }
   if (t.dataset.ban){
     if(!confirm('Ban '+t.dataset.ban+'?')) return;
     const hrs = parseFloat(($('#banhrs')||{}).value);
-    const body = {op:'ban', player_id:t.dataset.ban, reason:(($('#pnote')||{}).value)||'banned from admin panel'};
+    const body = gmBody({op:'ban', player_id:t.dataset.ban, reason:(($('#pnote')||{}).value)||'banned from admin panel'});
     if (hrs>0) body.expires = Date.now()/1000 + hrs*3600;
     out(await api('/api/action', body)); renderPlayers();
   }
@@ -434,44 +804,79 @@ document.body.addEventListener('click', async (e)=>{
   if (t.dataset.wl){ out(await api('/api/action',{op:'whitelist-add',player_id:t.dataset.wl})); renderPlayers(); }
 });
 $('#pfilt') && ($('#pfilt').oninput = () => renderPlayers());
-$('#wlenable').onchange = async ()=> out(await api('/api/action',{op:'whitelist-enable', enabled: $('#wlenable').checked}));
-$('#bcast').onclick = async ()=> out(await api('/api/action',{op:'broadcast', title:$('#btitle').value, body:$('#bbody').value, duration: +$('#bdur').value||30}));
-$('#bshut').onclick = async ()=> { if(!confirm('10 minute restart countdown?')) return; out(await api('/api/action',{op:'broadcast', broadcast_type:'ServerShutdown', shutdown_type:'Restart', shutdown_duration:600, frequency:60, title:'Restart', body:$('#bbody').value||'World restart soon'})); };
-$('#bcancel').onclick = async ()=> out(await api('/api/action',{op:'broadcast', broadcast_type:'ServerShutdown', cancel:true}));
-$('#grant').onclick = async ()=> out(await api('/api/action',{op:'grant-item', player_id:$('#tid').value, item:$('#item').value, qty:+$('#qty').value||1}));
-$('#axp').onclick = async ()=> out(await api('/api/action',{op:'award-xp', player_id:$('#tid').value, xp:+$('#xp').value||0}));
-$('#ask').onclick = async ()=> out(await api('/api/action',{op:'skill-points', player_id:$('#tid').value, points:+$('#sp').value||0}));
-$('#water').onclick = async ()=> out(await api('/api/action',{op:'refill-water', player_id:$('#tid').value}));
-$('#sset').onclick = async ()=> out(await api('/api/action',{op:'skill-module', player_id:$('#tid').value, module:$('#smod').value, level:+$('#slev').value||1}));
-$('#locate').onclick = async ()=> { const d=await api('/api/action',{op:'locate', player_id:$('#tid').value}); if(d.location){ $('#x').value=d.location.x; $('#y').value=d.location.y; $('#z').value=d.location.z;} out(d); };
-$('#tp').onclick = async ()=> out(await api('/api/action',{op:'teleport', player_id:$('#tid').value, x:+$('#x').value, y:+$('#y').value, z:+$('#z').value}));
-$('#tpto').onclick = async ()=> out(await api('/api/action',{op:'teleport-to-player', player_id:$('#tid').value, target_id:$('#toid').value}));
-$('#spawnv').onclick = async ()=> { const [v,t]=$('#veh').value.split('|'); out(await api('/api/action',{op:'spawn-vehicle', player_id:$('#tid').value, vehicle:v, template:t, x:$('#x').value, y:$('#y').value, z:$('#z').value})); };
-$('#welcomenow').onclick = async ()=> out(await api('/api/action',{op:'welcome-now', player_id:$('#tid').value}));
-$('#wipeinv').onclick = async ()=> { if(!confirm('Wipe inventory?')) return; out(await api('/api/action',{op:'clean-inventory', player_id:$('#tid').value, confirm:true})); };
-$('#wipeprog').onclick = async ()=> { if(!confirm('Reset progression?')) return; out(await api('/api/action',{op:'reset-progression', player_id:$('#tid').value, confirm:true})); };
+$('#wlenable').onchange = async ()=> out(await api('/api/action', gmBody({op:'whitelist-enable', enabled: $('#wlenable').checked})));
+$('#bcast').onclick = async ()=> out(await api('/api/action', gmBody({op:'broadcast', title:$('#btitle').value, body:$('#bbody').value, duration: +$('#bdur').value||30})));
+$('#bshut').onclick = async ()=> { if(!confirm('10 minute restart countdown?')) return; out(await api('/api/action', gmBody({op:'broadcast', broadcast_type:'ServerShutdown', shutdown_type:'Restart', shutdown_duration:600, frequency:60, title:'Restart', body:$('#bbody').value||'World restart soon'}))); };
+$('#bcancel').onclick = async ()=> out(await api('/api/action', gmBody({op:'broadcast', broadcast_type:'ServerShutdown', cancel:true})));
+$('#grant').onclick = async ()=> gm({op:'grant-item', player_id:$('#tid').value, item:$('#item').value, qty:+$('#qty').value||1});
+if ($('#catq')) $('#catq').oninput = renderCatHits;
+if ($('#catref')) $('#catref').onclick = async ()=> {
+  const d = await api('/api/action', {op:'refresh-catalog'});
+  out(d);
+  fillCatalog(d.items ? d : await api('/api/catalog'));
+  for (let i=0;i<25;i++){
+    await new Promise(r=>setTimeout(r, 2000));
+    fillCatalog(await api('/api/catalog'));
+    const m = CATALOG.meta||{};
+    if (m.wiki>0 && !m.fetching) break;
+  }
+};
+$('#axp').onclick = async ()=> gm({op:'award-xp', player_id:$('#tid').value, xp:+$('#xp').value||0});
+$('#ask').onclick = async ()=> gm({op:'skill-points', player_id:$('#tid').value, points:+$('#sp').value||0});
+$('#water').onclick = async ()=> gm({op:'refill-water', player_id:$('#tid').value});
+$('#sset').onclick = async ()=> gm({op:'skill-module', player_id:$('#tid').value, module:$('#smod').value, level:+$('#slev').value||1});
+$('#locate').onclick = async ()=> { const d=await gm({op:'locate', player_id:$('#tid').value}); if(d.location){ $('#x').value=d.location.x; $('#y').value=d.location.y; $('#z').value=d.location.z;} };
+$('#tp').onclick = async ()=> gm({op:'teleport', player_id:$('#tid').value, x:+$('#x').value, y:+$('#y').value, z:+$('#z').value});
+$('#tpoff').onclick = async ()=> {
+  if(!confirm('Offline-move only works if they are already offline. Type DC in Confirm phrase. This will not kick or UDP-drop.')) return;
+  gm({op:'teleport-offline', player_id:$('#tid').value, x:+$('#x').value, y:+$('#y').value, z:+$('#z').value, confirm_text:($('#gmphrase').value||'').trim()});
+};
+$('#tpto').onclick = async ()=> gm({op:'teleport-to-player', player_id:$('#tid').value, target_id:$('#toid').value});
+$('#spawnv').onclick = async ()=> { const [v,t]=$('#veh').value.split('|'); gm({op:'spawn-vehicle', player_id:$('#tid').value, vehicle:v, template:t, x:$('#x').value, y:$('#y').value, z:$('#z').value}); };
+$('#welcomenow').onclick = async ()=> gm({op:'welcome-now', player_id:$('#tid').value});
+$('#wipeinv').onclick = async ()=> { if(!confirm('Wipe inventory? Type WIPE in Confirm phrase.')) return; gm({op:'clean-inventory', player_id:$('#tid').value, confirm:true, confirm_text:($('#gmphrase').value||'').trim()}); };
+$('#wipeprog').onclick = async ()=> { if(!confirm('Reset progression? Type RESET in Confirm phrase.')) return; gm({op:'reset-progression', player_id:$('#tid').value, confirm:true, confirm_text:($('#gmphrase').value||'').trim()}); };
+$('#delapply').onclick = async ()=> {
+  if(!confirm('Apply will still refuse live DELETE. Type DELETE in Confirm phrase.')) return;
+  out(await api('/api/action', gmBody({op:'apply-delete-queue', confirm:true, confirm_text:($('#gmphrase').value||'').trim()})));
+  loadDeleteQueue();
+};
 $('#cload').onclick = async ()=> loadChar($('#cid').value);
 $('#rssave').onclick = async ()=> {
   const v = $('#rsat').value; if(!v){ out('pick a time'); return; }
   const at = new Date(v).getTime()/1000;
-  out(await api('/api/action',{op:'schedule-restart', at, lead:+$('#rslead').value||600}));
+  out(await api('/api/action', gmBody({op:'schedule-restart', at, lead:+$('#rslead').value||600})));
   renderWorld(await api('/api/status'));
 };
 $('#rscancel').onclick = async ()=> { out(await api('/api/action',{op:'cancel-schedule'})); renderWorld(await api('/api/status')); };
 $('#rsdo').onclick = async ()=> {
   if(!SEL_BACKUP){ out('select a backup'); return; }
-  out(await api('/api/action',{op:'restore-backup', name:SEL_BACKUP, confirm_text:$('#rstxt').value}));
+  out(await api('/api/action', gmBody({op:'restore-backup', name:SEL_BACKUP, confirm_text:$('#rstxt').value})));
 };
 $('#inisave').onclick = async ()=> {
   const keys = [...document.querySelectorAll('#inikeys input')].map(i => ({file:i.dataset.ini, key:i.dataset.key, value:i.value}));
   out(await api('/api/action',{op:'save-settings', keys}));
 };
-$('#iniapply').onclick = async ()=> { if(!confirm('Apply UserSettings to the battlegroup? Restart maps afterwards.')) return; out(await api('/api/action',{op:'apply-settings', confirm:true})); };
+$('#iniapply').onclick = async ()=> { if(!confirm('Apply UserSettings to the battlegroup? Restart maps afterwards. That is downtime on the public world.')) return; out(await api('/api/action', gmBody({op:'apply-settings', confirm:true}))); };
 $('#cfgsave').onclick = async ()=> {
   const items = $('#witems').value.split(/\n/).map(l => l.trim()).filter(Boolean).map(l => { const [item,qty]=l.split(','); return {item:item.trim(), qty:+(qty||1)}; });
-  const body = {op:'save-config', welcome:{enabled:$('#wen').checked, items}};
+  const body = {op:'save-config', welcome:{enabled:$('#wen').checked, items}, presence:{
+    discord_join: $('#pjoin').checked,
+    discord_leave: $('#pleave').checked,
+    discord_maps: $('#pmaps').checked,
+    restart_defer_if_online: $('#pdefer').checked
+  }};
   if ($('#whurl').value.trim()) body.webhook_url = $('#whurl').value.trim();
   out(await api('/api/action', body));
+};
+$('#gatesave').onclick = async ()=> {
+  out(await api('/api/action', {op:'save-config', gates:{
+    grants: $('#ggrants').checked,
+    wipe_inventory: $('#gwipe').checked,
+    reset_progression: $('#greset').checked,
+    teleport: $('#gtp').checked,
+    spawn_vehicle: $('#gveh').checked
+  }}));
 };
 $('#rottok').onclick = async ()=> {
   if(!confirm('Rotate token? You will need the new value immediately.')) return;

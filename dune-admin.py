@@ -41,6 +41,7 @@ COOKIE = "dune_admin"
 AUTH_TOKEN_MQ = "Nu6VmPWUMvdPMeB7qErr"  # Funcom ServerCommand envelope (not a user secret)
 JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9._-]{20,}")
 HEX_ID_RE = re.compile(r"^[A-Fa-f0-9]{8,64}$")
+FUNCOM_TAG_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}#\d{2,8}$")
 LOGIN_HITS: dict[str, list[float]] = {}
 LOGIN_LOCK = threading.Lock()
 _NS_CACHE = {"t": 0.0, "v": ""}
@@ -59,6 +60,7 @@ COMMON_ITEMS = [
     "FuelCell",
     "WeldingWire",
     "AdvancedServok",
+    "T3MiningGalleryComponent1",
     "ParticleCapacitor",
     "CarbideScraps",
     "PlastaniumIngot",
@@ -168,6 +170,11 @@ def ns() -> str:
 def bg() -> str:
     n = ns()
     return n[len("funcom-seabass-") :] if n.startswith("funcom-seabass-") else ""
+
+
+def world_host_id() -> str:
+    m = re.search(r"(?i)sh-([0-9a-f]{16})", bg() or ns() or "")
+    return m.group(1).upper() if m else ""
 
 
 def kubectl_json(args: list[str], timeout: int = 30) -> dict | list | None:
@@ -342,13 +349,27 @@ def _pick_col(cols: set[str], names: tuple[str, ...]) -> str | None:
     return None
 
 
+def _roster_player_id_sql() -> str:
+    """Prefer FLS hex in accounts.user, but never the world HostId."""
+    hid = (world_host_id() or "").replace("'", "")
+    if hid:
+        return (
+            "COALESCE("
+            "NULLIF(CASE WHEN upper(a.\"user\"::text) = '%s' THEN NULL "
+            "ELSE NULLIF(a.\"user\"::text, '') END, ''), "
+            "NULLIF(a.funcom_id::text, ''), "
+            "ps.account_id::text)" % hid
+        )
+    return 'COALESCE(NULLIF(a."user"::text, \'\'), NULLIF(a.funcom_id::text, \'\'), ps.account_id::text)'
+
+
 def discover_player_sql() -> tuple[str | None, str]:
     global _PLAYER_SQL
     if _PLAYER_SQL:
         return _PLAYER_SQL, ""
     known = [
         (
-            "SELECT COALESCE(a.\"user\"::text, a.funcom_id::text, ps.account_id::text) AS player_id, "
+            "SELECT %s AS player_id, "
             "COALESCE(ps.character_name::text, '') AS name, "
             "COALESCE(ps.last_avatar_activity::text, '') AS last_seen, "
             "CASE WHEN lower(COALESCE(ps.online_status::text,'')) "
@@ -356,7 +377,7 @@ def discover_player_sql() -> tuple[str | None, str]:
             "CASE WHEN COALESCE(ps.transfer_count, 0) > 0 THEN '1' ELSE '0' END AS transferred "
             "FROM dune.player_state ps "
             "LEFT JOIN dune.accounts a ON a.id = ps.account_id "
-            "ORDER BY 2, 1 LIMIT 2000"
+            "ORDER BY 2, 1 LIMIT 2000" % _roster_player_id_sql()
         ),
         (
             "SELECT COALESCE(account_id::text, player_controller_id::text) AS player_id, "
@@ -473,17 +494,24 @@ def player_location(player_id: str) -> dict | None:
         return None
     queries = [
         (
+            "SELECT a.transform::text FROM dune.actors a "
+            "JOIN dune.player_state ps ON ps.player_pawn_id = a.id "
+            "LEFT JOIN dune.accounts acc ON acc.id = ps.account_id "
+            "WHERE acc.\"user\"::text ILIKE '%s' OR acc.funcom_id::text ILIKE '%s' "
+            "OR ps.account_id::text = '%s' LIMIT 1" % (pid, pid, pid)
+        ),
+        (
             "SELECT op.overmap_location::text FROM dune.overmap_players op "
             "JOIN dune.player_state ps ON ps.player_controller_id::text = op.player_id::text "
             "LEFT JOIN dune.accounts a ON a.id = ps.account_id "
-            "WHERE a.\"user\"::text ILIKE '%s' OR ps.account_id::text = '%s' "
-            "LIMIT 1" % (pid, pid)
+            "WHERE a.\"user\"::text ILIKE '%s' OR a.funcom_id::text ILIKE '%s' "
+            "OR ps.account_id::text = '%s' LIMIT 1" % (pid, pid, pid)
         ),
         (
             "SELECT death_location::text FROM dune.player_state ps "
             "LEFT JOIN dune.accounts a ON a.id = ps.account_id "
-            "WHERE a.\"user\"::text ILIKE '%s' OR ps.account_id::text = '%s' "
-            "LIMIT 1" % (pid, pid)
+            "WHERE a.\"user\"::text ILIKE '%s' OR a.funcom_id::text ILIKE '%s' "
+            "OR ps.account_id::text = '%s' LIMIT 1" % (pid, pid, pid)
         ),
     ]
     for q in queries:
@@ -525,6 +553,53 @@ def player_location(player_id: str) -> dict | None:
                 except ValueError:
                     pass
     return None
+
+
+def service_broadcast_fields(
+    *,
+    kind: str = "Generic",
+    title: str = "Server",
+    body: str = "",
+    duration: int = 30,
+    shutdown_type: str = "Restart",
+    shutdown_duration: int = 600,
+    frequency: int = 60,
+    cancel: bool = False,
+    at: int = 0,
+) -> dict:
+    """Inner ServerCommand for Funcom ServiceBroadcast. Title/Body live under BroadcastPayload."""
+    title = str(title or "Server")
+    body = str(body or "")
+    loc = [
+        {"Key": "en", "Title": title, "Body": body},
+        {"Key": "en-US", "Title": title, "Body": body},
+    ]
+    if cancel or str(kind) == "ServerShutdown":
+        now = int(time.time())
+        ts = int(at) if at else now + int(shutdown_duration or 0)
+        payload = {
+            "ShutdownType": "Cancel" if cancel else str(shutdown_type or "Restart"),
+            "DateTimestamp": now,
+            "ShutdownDuration": 0 if cancel else int(shutdown_duration or 0),
+            "ShutdownTimestamp": now if cancel else ts,
+            "BroadcastFrequency": int(frequency or 60),
+            "LocalizedText": loc,
+        }
+        if cancel:
+            payload["ShouldCancel"] = True
+        return {
+            "ServerCommand": "ServiceBroadcast",
+            "BroadcastType": "ServerShutdown",
+            "BroadcastPayload": payload,
+        }
+    return {
+        "ServerCommand": "ServiceBroadcast",
+        "BroadcastType": "Generic",
+        "BroadcastPayload": {
+            "BroadcastDuration": int(duration or 30),
+            "LocalizedText": loc,
+        },
+    }
 
 
 def mq_publish(fields: dict) -> tuple[bool, str]:
@@ -576,9 +651,12 @@ def maps_from_pods() -> list[dict]:
         if len(parts) < 3:
             continue
         name, ready, phase = parts[0], parts[1], parts[2]
-        if "sg-survival" not in name and "sg-overmap" not in name:
+        if "sg-survival" not in name and "sg-overmap" not in name and "sgw-deploy" not in name:
             continue
-        kind = "Survival" if "survival" in name else "Overmap"
+        if "sgw-deploy" in name:
+            kind = "Gateway"
+        else:
+            kind = "Survival" if "survival" in name else "Overmap"
         rows.append(
             {
                 "name": name,
@@ -634,12 +712,15 @@ def serverstats_players() -> list[dict]:
     items = data.get("items")
     if items is None and data.get("kind"):
         items = [data]
+    hid = world_host_id()
     for item in items or []:
         st = item.get("status") or {}
-        # Shapes vary by Funcom build; collect anything that looks like a roster.
         blob = json.dumps(st)
         for m in re.finditer(r'"([A-Fa-f0-9]{16,})"', blob):
-            found.append({"player_id": m.group(1), "source": "serverstats"})
+            hx = m.group(1)
+            if hid and hx.upper() == hid:
+                continue
+            found.append({"player_id": hx, "source": "serverstats"})
         count = st.get("playerCount") or st.get("players") or st.get("numPlayers")
         if isinstance(count, int):
             found.append({"player_count": count, "source": "serverstats"})
@@ -674,33 +755,35 @@ def load_players() -> tuple[list[dict], str]:
                         "transferred": xfer,
                     }
                 )
+    hid = world_host_id()
+    for p in players:
+        pid = (p.get("player_id") or "").upper()
+        if hid and pid == hid:
+            p["player_id"] = ""
+            extra = "Funcom stored the world HostId as this account's user field"
+            p["note"] = ((p.get("note") or "").strip() + " " + extra).strip()
+        elif "#" in (p.get("player_id") or ""):
+            extra = "Funcom id (this world's accounts.user is the HostId, not an FLS hex)"
+            p["note"] = ((p.get("note") or "").strip() + " " + extra).strip()
+    players = [p for p in players if p.get("player_id") or p.get("name")]
     online_ids = set()
+    roster = {(p.get("player_id") or "").upper() for p in players if p.get("player_id")}
     for row in serverstats_players():
         if row.get("player_id"):
-            online_ids.add(row["player_id"].upper())
+            pid = normalize_player_id(row["player_id"]).upper()
+            if hid and pid == hid:
+                continue
+            if pid in roster:
+                online_ids.add(pid)
     bans = {b.get("player_id", "").upper() for b in load_json_file(BANS_FILE, []) if isinstance(b, dict)}
     wl = load_json_file(WHITELIST_FILE, {"enabled": False, "ids": []})
     wl_ids = {str(x).upper() for x in (wl.get("ids") or [])}
-    by_id = {(p.get("player_id") or "").upper(): p for p in players}
     for p in players:
         pid = (p.get("player_id") or "").upper()
         if pid in online_ids:
             p["online"] = True
         p["banned"] = pid in bans
         p["whitelisted"] = pid in wl_ids
-    for pid in sorted(online_ids):
-        if pid not in by_id:
-            players.append(
-                {
-                    "player_id": pid,
-                    "name": "",
-                    "last_seen": "",
-                    "online": True,
-                    "banned": pid in bans,
-                    "whitelisted": pid in wl_ids,
-                    "transferred": False,
-                }
-            )
     players.sort(key=lambda p: (not p.get("online"), (p.get("name") or "").lower(), p.get("player_id") or ""))
     enrich = globals().get("enrich_players")
     if callable(enrich):
@@ -783,6 +866,8 @@ def world_status(ip: str) -> dict:
         notes.append("Survival is not 1/1 Running")
     if not overmap_ok:
         notes.append("Overmap is not 1/1 Running")
+    if any(m["kind"] == "Gateway" and not m["ready"] for m in maps):
+        notes.append("Gateway is not 1/1 Running")
     if not ports.get("rmq_31982"):
         notes.append("join TCP 31982 is down")
     if not ports.get("director_31519"):
@@ -816,12 +901,87 @@ def battlegroup(action: str, extra: list[str] | None = None) -> tuple[int, str]:
     return run(cmd, timeout=180)
 
 
+def resolve_player_id(pid: str) -> str:
+    """GM commands need accounts.user hex, even when that hex is the world HostId."""
+    raw = (pid or "").strip()
+    n = normalize_player_id(raw)
+    hid = world_host_id()
+    q = raw.replace("'", "").replace("%", "").replace("\\", "")
+    if q:
+        sql = (
+            "SELECT a.\"user\"::text, a.funcom_id::text FROM dune.player_state ps "
+            "LEFT JOIN dune.accounts a ON a.id = ps.account_id "
+            "WHERE a.funcom_id::text ILIKE '%s' OR ps.character_name::text ILIKE '%s' "
+            "OR a.\"user\"::text ILIKE '%s' OR ps.account_id::text = '%s' "
+            "LIMIT 1" % (q, q, q, q)
+        )
+        code, out = psql(sql)
+        if code == 0 and out.strip():
+            parts = out.splitlines()[0].split("\t")
+            user = normalize_player_id((parts[0] if parts else "") or "")
+            fun = (parts[1] if len(parts) > 1 else "").strip()
+            if user and HEX_ID_RE.match(user):
+                return user
+            if fun:
+                return fun
+    if n and HEX_ID_RE.match(n) and (not hid or n.upper() != hid):
+        return n
+    return n or raw
+
+
+def resolve_item_name(name: str) -> str:
+    raw = (name or "").strip()
+    if " — " in raw:
+        raw = raw.rsplit(" — ", 1)[-1].strip()
+    key = re.sub(r"[^a-z0-9]+", "", raw.lower())
+    aliases = {
+        "calibratedservok": "T3MiningGalleryComponent1",
+        "calibratedservoks": "T3MiningGalleryComponent1",
+        "t3mininggallerycomponent1": "T3MiningGalleryComponent1",
+    }
+    if key in aliases:
+        return aliases[key]
+    fn = globals().get("catalog")
+    items = fn().get("items", []) if callable(fn) else []
+    low = raw.lower()
+    exact = []
+    contains = []
+    for row in items:
+        if not isinstance(row, (list, tuple)) or len(row) < 2:
+            continue
+        disp, fid = str(row[0]), str(row[1])
+        if fid.lower() == low or disp.lower() == low:
+            exact.append(fid)
+        elif low and (low in disp.lower() or low in fid.lower()):
+            contains.append(fid)
+    if exact:
+        return exact[0]
+    uniq = list(dict.fromkeys(contains))
+    if len(uniq) == 1:
+        return uniq[0]
+    return raw
+
+
 def do_action(body: dict) -> dict:
     op = str(body.get("op") or "")
-    pid = normalize_player_id(str(body.get("player_id") or ""))
+    raw_pid = str(body.get("player_id") or "").strip()
+    hid = world_host_id()
+    if raw_pid and hid and normalize_player_id(raw_pid).upper() == hid:
+        return {
+            "ok": False,
+            "error": "that is the world HostId, not a player id. Players → your character → Use",
+        }
+    pid = resolve_player_id(raw_pid)
     confirm = bool(body.get("confirm"))
-    if pid and pid != "*" and not HEX_ID_RE.match(pid):
-        return {"ok": False, "error": "player_id must be a Funcom FLS hex id"}
+    if pid and pid != "*" and not HEX_ID_RE.match(pid) and not FUNCOM_TAG_RE.match(pid) and op not in ("locate", "save-note"):
+        return {"ok": False, "error": "player_id must be an FLS hex or Funcom id (name#digits) from Players → Use"}
+    body["player_id"] = pid
+
+    prep = globals().get("prepare_gm")
+    if callable(prep):
+        blocked = prep(body)
+        if blocked is not None:
+            return blocked
 
     destructive = {
         "stop",
@@ -924,24 +1084,28 @@ def do_action(body: dict) -> dict:
         save_json_file(WHITELIST_FILE, wl)
         return {"ok": True, "out": "whitelist enabled=%s" % wl["enabled"]}
     if op == "broadcast":
-        fields = {
-            "ServerCommand": "ServiceBroadcast",
-            "BroadcastType": str(body.get("broadcast_type") or "Generic"),
-            "Title": str(body.get("title") or "Server"),
-            "Body": str(body.get("body") or ""),
-            "BroadcastDuration": int(body.get("duration") or 30),
-        }
-        if fields["BroadcastType"] == "ServerShutdown":
-            fields["ShutdownType"] = str(body.get("shutdown_type") or "Restart")
-            fields["ShutdownDuration"] = int(body.get("shutdown_duration") or 600)
-            fields["BroadcastFrequency"] = int(body.get("frequency") or 60)
-            fields["ShouldCancel"] = bool(body.get("cancel"))
+        title = str(body.get("title") or "Server")
+        text = str(body.get("body") or "").strip()
+        kind = str(body.get("broadcast_type") or "Generic")
+        cancel = bool(body.get("cancel"))
+        if kind != "ServerShutdown" and not cancel and not text:
+            return {"ok": False, "error": "type a message in the Broadcast box"}
+        fields = service_broadcast_fields(
+            kind=kind,
+            title=title,
+            body=text,
+            duration=int(body.get("duration") or 30),
+            shutdown_type=str(body.get("shutdown_type") or "Restart"),
+            shutdown_duration=int(body.get("shutdown_duration") or 600),
+            frequency=int(body.get("frequency") or 60),
+            cancel=cancel,
+        )
         ok, msg = mq_publish(fields)
         return {"ok": ok, "out": msg}
     if op == "grant-item":
         if not pid:
             return {"ok": False, "error": "player_id required"}
-        item = str(body.get("item") or "").strip()
+        item = resolve_item_name(str(body.get("item") or ""))
         if not item:
             return {"ok": False, "error": "item required (Funcom FName, e.g. T2MachineComponent)"}
         ok, msg = mq_publish(
@@ -953,7 +1117,7 @@ def do_action(body: dict) -> dict:
                 "Durability": float(body.get("durability") or 1.0),
             }
         )
-        return {"ok": ok, "out": msg}
+        return {"ok": ok, "out": msg, "item": item}
     if op == "award-xp":
         if not pid:
             return {"ok": False, "error": "player_id required"}
@@ -1115,6 +1279,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/healthz":
             self._json(200, {"ok": True})
             return
+        if path in ("/status", "/status.html"):
+            fn = globals().get("public_status_page")
+            page = fn() if callable(fn) else "<p>status unavailable</p>"
+            self._send(200, page.encode("utf-8"))
+            return
+        if path == "/status.json":
+            fn = globals().get("public_status")
+            self._json(200, fn() if callable(fn) else {"ok": False, "error": "extras not loaded"})
+            return
         authed = self._auth()
         if path in ("/", "/index.html"):
             extra = None
@@ -1136,6 +1309,7 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "players": players,
                     "error": err,
+                    "world_host_id": world_host_id(),
                     "bans": load_json_file(BANS_FILE, []),
                     "whitelist": load_json_file(WHITELIST_FILE, {"enabled": False, "ids": []}),
                 },
@@ -1167,6 +1341,27 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/config":
             fn = globals().get("read_admin_config")
             self._json(200, fn() if callable(fn) else {})
+            return
+        if path == "/api/social":
+            fn = globals().get("social_intel")
+            if not callable(fn):
+                self._json(501, {"ok": False, "error": "extras not loaded"})
+                return
+            self._json(200, fn())
+            return
+        if path == "/api/delete-queue":
+            fn = globals().get("read_delete_queue")
+            self._json(200, fn() if callable(fn) else {"items": []})
+            return
+        if path == "/api/world-objects":
+            fn = globals().get("world_objects")
+            kind = (parse_qs(u.query).get("kind") or ["all"])[0]
+            if kind not in ("all", "bases", "vehicles", "orphans"):
+                kind = "all"
+            if not callable(fn):
+                self._json(501, {"ok": False, "error": "extras not loaded"})
+                return
+            self._json(200, fn(kind))
             return
         if path == "/api/catalog":
             fn = globals().get("catalog")
@@ -1222,7 +1417,13 @@ class Handler(BaseHTTPRequestHandler):
             result = do_action(body)
         except Exception as e:
             result = {"ok": False, "error": str(e)[:300]}
-        audit(str(body.get("op") or "action"), {"ok": result.get("ok"), "player_id": body.get("player_id")})
+        fin = globals().get("finish_gm")
+        if callable(fin) and isinstance(result, dict):
+            result = fin(body, result)
+        stamp = globals().get("stamp_op")
+        if callable(stamp) and isinstance(result, dict) and result.get("ok") and not body.get("dry_run"):
+            stamp(str(body.get("op") or ""), True)
+        audit(str(body.get("op") or "action"), {"ok": result.get("ok"), "player_id": body.get("player_id"), "dry_run": bool(body.get("dry_run"))})
         self._json(200 if result.get("ok") else 400, result)
 
 
