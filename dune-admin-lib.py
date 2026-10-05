@@ -24,37 +24,87 @@ _LAST_ONLINE: set = set()
 _WAS_JOINABLE = False
 _ONLINE_READY = False
 
+def _k(file: str, key: str, cat: str, hint: str = "") -> dict:
+    return {"file": file, "key": key, "cat": cat, "hint": hint}
+
+
 INI_KEYS = [
-    ("UserServerCustomSettings.ini", "PVPMode"),
-    ("UserServerCustomSettings.ini", "GatheringAmount"),
-    ("UserServerCustomSettings.ini", "CraftingCost"),
-    ("UserServerCustomSettings.ini", "WaterExtractionRate"),
-    ("UserServerCustomSettings.ini", "CraftingTimeMultiplier"),
-    ("UserServerCustomSettings.ini", "LootRespawnSpeed"),
-    ("UserServerCustomSettings.ini", "BuildingCostMultiplier"),
-    ("UserServerCustomSettings.ini", "ResourceRespawnSpeed"),
-    ("UserServerCustomSettings.ini", "FuelBurnTimeMultiplier"),
-    ("UserServerCustomSettings.ini", "InventoryVolumeMultiplier"),
-    ("UserServerCustomSettings.ini", "PlayerDamageToPlayer"),
-    ("UserServerCustomSettings.ini", "GlobalXpMultiplier"),
-    ("UserServerCustomSettings.ini", "CombatXp"),
-    ("UserServerCustomSettings.ini", "GatheringXp"),
-    ("UserServerCustomSettings.ini", "HeatBuildupRate"),
-    ("UserServerCustomSettings.ini", "ThirstMultiplier"),
-    ("UserServerCustomSettings.ini", "LandsraadContributionMultiplier"),
-    ("UserServerCustomSettings.ini", "BaseBackupToolTimeRestriction"),
-    ("UserServerCustomSettings.ini", "PlayerDeathLootRule"),
-    ("UserServerCustomSettings.ini", "DropEquipmentOnDeath"),
-    ("UserServerCustomSettings.ini", "SandwormConsequences"),
-    ("UserGame.ini", "m_MaxNumLandclaimSegments"),
-    ("UserGame.ini", "m_bShouldForceEnablePvpOnAllPartitions"),
-    ("UserGame.ini", "m_bAreSecurityZonesEnabled"),
-    ("UserGame.ini", "m_BaseBackupToolTimeRestrictionInSeconds"),
-    ("UserEngine.ini", "Dune.GlobalMiningOutputMultiplier"),
-    ("UserEngine.ini", "Dune.GlobalVehicleMiningOutputMultiplier"),
-    ("UserEngine.ini", "Bgd.ServerDisplayName"),
-    ("UserEngine.ini", "sandworm.dune.Enabled"),
-    ("UserEngine.ini", "Sandstorm.Enabled"),
+    _k("UserServerCustomSettings.ini", "DifficultyLevel", "Custom difficulty", "Must stay Custom or Funcom ignores this file"),
+    _k("UserServerCustomSettings.ini", "PVPMode", "PvP", "NoPVP / Limited / FullPVP"),
+    _k("UserGame.ini", "m_bShouldForceEnablePvpOnAllPartitions", "PvP", "True forces PvP on every partition"),
+    _k("UserGame.ini", "m_bAreSecurityZonesEnabled", "PvP", "False allows PvP/abilities everywhere"),
+    _k("UserServerCustomSettings.ini", "PlayerDamageToPlayer", "PvP", "0 to 10; 0 = no player damage"),
+    _k("UserServerCustomSettings.ini", "PVPDamageStructures", "PvP", "0 to 10; 0 = structures take no PvP damage"),
+    _k("UserEngine.ini", "SecurityZones.PvpResourceMultiplier", "PvP", "Extra yield inside PvP zones"),
+    _k("UserServerCustomSettings.ini", "GatheringAmount", "Harvesting", "Duplicates mining CVars; 0.1 to 10"),
+    _k("UserEngine.ini", "Dune.GlobalMiningOutputMultiplier", "Harvesting", "Hand mining yield"),
+    _k("UserEngine.ini", "Dune.GlobalVehicleMiningOutputMultiplier", "Harvesting", "Vehicle mining yield"),
+    _k("UserServerCustomSettings.ini", "CraftingCost", "Harvesting", "0 to 10; 0 = free crafts"),
+    _k("UserServerCustomSettings.ini", "CraftingTimeMultiplier", "Harvesting", "0 to 5; 0 = instant"),
+    _k("UserServerCustomSettings.ini", "WaterExtractionRate", "Harvesting", "Higher = slower extraction"),
+    _k("UserServerCustomSettings.ini", "LootRespawnSpeed", "Harvesting", "Higher = chests take longer"),
+    _k("UserServerCustomSettings.ini", "ResourceRespawnSpeed", "Harvesting", "Higher = nodes return sooner"),
+    _k("UserServerCustomSettings.ini", "BuildingCostMultiplier", "Harvesting", "0 to 10; 0 = free building"),
+    _k("UserServerCustomSettings.ini", "FuelBurnTimeMultiplier", "Harvesting", "0 to 10; 0 = no fuel burn"),
+    _k("UserServerCustomSettings.ini", "InventoryVolumeMultiplier", "Harvesting", "Carry volume; 0.1 to 10"),
+    _k("UserServerCustomSettings.ini", "PlayerDamageToNPC", "Combat", "0.1 to 10"),
+    _k("UserServerCustomSettings.ini", "PlayerDamageToVehicle", "Combat", "0.1 to 10"),
+    _k("UserServerCustomSettings.ini", "NPCHealth", "Combat", "0.1 to 10"),
+    _k("UserServerCustomSettings.ini", "NPCDamageToPlayer", "Combat", "0.1 to 10"),
+    _k("UserServerCustomSettings.ini", "NPCDamageToNPC", "Combat", "0.1 to 10"),
+    _k("UserServerCustomSettings.ini", "NPCRespawnMultiplier", "Combat", "Higher = NPCs return sooner"),
+    _k("UserServerCustomSettings.ini", "PlayerStaminaDrain", "Combat", "Higher = stamina drains faster"),
+    _k("UserServerCustomSettings.ini", "PlayerShieldDamageAbsorptionMultiplier", "Combat", "Higher = player shields last longer"),
+    _k("UserServerCustomSettings.ini", "NPCShieldDamageAbsorptionMultiplier", "Combat", "Higher = NPC shields last longer"),
+    _k("UserServerCustomSettings.ini", "GlobalXpMultiplier", "Combat", "0 to 10; 0 = no XP"),
+    _k("UserServerCustomSettings.ini", "CombatXp", "Combat", "0 to 10"),
+    _k("UserServerCustomSettings.ini", "GatheringXp", "Combat", "0 to 10"),
+    _k("UserServerCustomSettings.ini", "MissionXp", "Combat", "0 to 10"),
+    _k("UserServerCustomSettings.ini", "IntelPointsGainMultiplier", "Combat", "0 to 10; 0 = no Intel"),
+    _k("UserServerCustomSettings.ini", "ItemDurabilityDrainMultiplier", "Durability", "How fast current durability wears; 0 = never wears. Does not change the repair tax."),
+    _k("UserServerCustomSettings.ini", "bEnableItemMaxDurabilityLoss", "Durability", "True = repairing cuts max durability (the red bar)"),
+    _k("UserEngine.ini", "dw.VehicleDurabilityDamageMultiplier", "Durability", "Vehicle wear; 0 to 10; 0 = off"),
+    _k("UserGame.ini", "UpdateRateInSeconds", "Durability", "Item deterioration tick; 0 = off"),
+    _k("UserServerCustomSettings.ini", "HeatBuildupRate", "Survival", "0 to 10; 0 = no heat"),
+    _k("UserServerCustomSettings.ini", "ThirstMultiplier", "Survival", "0 to 10; 0 = no thirst"),
+    _k("UserServerCustomSettings.ini", "DropEquipmentOnDeath", "Survival", "All / Backpack / Default / None"),
+    _k("UserServerCustomSettings.ini", "PlayerDeathLootRule", "Survival", "DependsOnSecurityZone / NeverAllowOtherPlayers / AlwaysAllowOtherPlayers"),
+    _k("UserServerCustomSettings.ini", "SandwormConsequences", "Survival", "All / Backpack / Default / None"),
+    _k("UserServerCustomSettings.ini", "bAllowDynamicBuildingDamage", "Survival", "Storms/decay damage buildings"),
+    _k("UserGame.ini", "m_bCoriolisAutoSpawnEnabled", "Storms & worm", "Coriolis auto-spawn"),
+    _k("UserEngine.ini", "Sandstorm.Enabled", "Storms & worm", "1 / 0"),
+    _k("UserEngine.ini", "Sandstorm.Treasure.Enabled", "Storms & worm", "1 / 0"),
+    _k("UserEngine.ini", "sandworm.dune.Enabled", "Storms & worm", "1 / 0"),
+    _k("UserEngine.ini", "Sandworm.SandwormDangerZonesEnabled", "Storms & worm", "true / false"),
+    _k("UserEngine.ini", "Vehicle.SandwormCollisionInteraction", "Storms & worm", "Worm can shove vehicles"),
+    _k("UserEngine.ini", "Vehicle.SandwormInvulnerabilitySecondsOnExit", "Storms & worm", "Seconds after exiting a vehicle"),
+    _k("UserEngine.ini", "Vehicle.SandwormInvulnerabilitySecondsOnServerRestart", "Storms & worm", "Seconds after a map restart"),
+    _k("UserGame.ini", "HarvestSpicePickupThreatUnit", "Sandworm threat", "Higher = worm breaches sooner"),
+    _k("UserGame.ini", "HarvestSpiceCoalesceThreatUnit", "Sandworm threat", ""),
+    _k("UserGame.ini", "HarvestFlourSandPickupThreatUnit", "Sandworm threat", ""),
+    _k("UserGame.ini", "HarvestFlourSandCoalesceThreatUnit", "Sandworm threat", ""),
+    _k("UserGame.ini", "WalkingThreatPerSec", "Sandworm threat", ""),
+    _k("UserGame.ini", "CrouchingThreatPerSec", "Sandworm threat", ""),
+    _k("UserGame.ini", "RunningThreatPerSec", "Sandworm threat", ""),
+    _k("UserGame.ini", "SprintingThreatPerSec", "Sandworm threat", ""),
+    _k("UserGame.ini", "HyperSprintingThreatPerSec", "Sandworm threat", ""),
+    _k("UserGame.ini", "DashingThreatPerSec", "Sandworm threat", ""),
+    _k("UserGame.ini", "SuspendingThreatPerSec", "Sandworm threat", ""),
+    _k("UserGame.ini", "DrumsandThreatPerSec", "Sandworm threat", ""),
+    _k("UserGame.ini", "ShieldingThreatPerSec", "Sandworm threat", ""),
+    _k("UserServerCustomSettings.ini", "LandsraadContributionMultiplier", "Landsraad", "0 to 10"),
+    _k("UserServerCustomSettings.ini", "LandsraadSpecializationXpMultiplier", "Landsraad", "0 to 10"),
+    _k("UserServerCustomSettings.ini", "LandsraadFactionStandingMultiplier", "Landsraad", "0 to 10"),
+    _k("UserServerCustomSettings.ini", "bLandsraadDisableDecreeRerollLimit", "Landsraad", "True / False"),
+    _k("UserGame.ini", "m_MaxNumLandclaimSegments", "Building", "Also needed on each client"),
+    _k("UserGame.ini", "m_BuildingBlueprintMaxExtensions", "Building", "Landclaim expansions"),
+    _k("UserGame.ini", "m_BaseBackupMaxExtensions", "Building", ""),
+    _k("UserGame.ini", "m_bBuildingRestrictionLimitsEnabled", "Building", "Also needed on each client"),
+    _k("UserGame.ini", "m_BaseBackupToolTimeRestrictionInSeconds", "Building", "604800 = 7 days; UserGame seconds"),
+    _k("UserServerCustomSettings.ini", "BaseBackupToolTimeRestriction", "Building", "Hours; custom-settings copy of the cooldown"),
+    _k("UserServerCustomSettings.ini", "BuildingPieceLimitMultiplier", "Building", "0.1 to 10"),
+    _k("UserServerCustomSettings.ini", "bBuildingInfiniteStability", "Building", "True / False"),
+    _k("UserEngine.ini", "Bgd.ServerDisplayName", "Listing", "Sietch name in Funcom directory"),
 ]
 
 CATALOG = [
@@ -404,7 +454,8 @@ def ini_set(text: str, key: str, value: str) -> str:
 def read_settings() -> dict:
     files = {}
     values = []
-    for fname, key in INI_KEYS:
+    for spec in INI_KEYS:
+        fname, key = spec["file"], spec["key"]
         if fname not in files:
             code, out = fb_exec(["cat", "/srv/UserSettings/" + fname])
             files[fname] = out if code == 0 else ""
@@ -413,11 +464,20 @@ def read_settings() -> dict:
         val = ini_get(files[fname], key)
         if key == "m_BaseBackupToolTimeRestrictionInSeconds" and not val:
             val = "604800"
-        values.append({"file": fname, "key": key, "value": val})
+        values.append(
+            {
+                "file": fname,
+                "key": key,
+                "value": val,
+                "cat": spec["cat"],
+                "hint": spec.get("hint") or "",
+            }
+        )
     return {"keys": values}
 
 
 def write_settings(updates: list) -> tuple[bool, str]:
+    allowed = {(s["file"], s["key"]) for s in INI_KEYS}
     by_file: dict[str, list] = {}
     for u in updates:
         by_file.setdefault(str(u.get("file")), []).append(u)
@@ -433,9 +493,12 @@ def write_settings(updates: list) -> tuple[bool, str]:
             text = p.read_text(encoding="utf-8", errors="replace")
         for u in items:
             key = str(u.get("key") or "")
-            if not any(f == fname and k == key for f, k in INI_KEYS):
+            if (fname, key) not in allowed:
                 continue
-            text = ini_set(text, key, str(u.get("value") or "").strip())
+            val = str(u.get("value") or "").strip()
+            if not val and not ini_get(text, key):
+                continue
+            text = ini_set(text, key, val)
         dest_setup = SETUP_CFG / fname
         dest_setup.parent.mkdir(parents=True, exist_ok=True)
         dest_setup.write_text(text, encoding="utf-8")

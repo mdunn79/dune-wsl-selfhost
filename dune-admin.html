@@ -28,6 +28,11 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0e0d0b;padding:10px;b
 a{color:var(--acc)}
 .login{max-width:420px;margin:12vh auto;background:var(--card);padding:24px;border-radius:10px}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}
+.ini-cat{margin:0 0 8px;border:1px solid #2a261f;border-radius:6px;padding:4px 10px 8px;background:#16140f}
+.ini-cat summary{cursor:pointer;color:var(--acc);font-weight:600;padding:6px 0}
+.ini-cat .row{margin:4px 0}
+.ini-hint{color:var(--muted);font-size:12px;margin-left:6px}
+.ini-file{color:var(--muted);font-size:11px;min-width:4.5em;display:inline-block}
 </style>
 </head>
 <body>
@@ -173,7 +178,7 @@ a{color:var(--acc)}
 <section id="settings" class="tab" hidden>
   <div class="card">
     <h3 style="margin:0 0 8px">Rates / world INI</h3>
-    <p class="muted">Writes File Browser UserSettings and Funcom setup/config. Apply copies defaults; <b>restart maps</b> for the game to load them. Base backup seconds (604800 = 7 days) is the cooldown lever.</p>
+    <p class="muted">Writes File Browser UserSettings and Funcom setup/config. Save, then <b>Apply UserSettings</b>, then <b>restart maps</b> (rates do not hot-reload). Durability drain is wear; max-durability loss is the repair tax.</p>
     <div id="inikeys"></div>
     <p class="row">
       <button class="act" id="inisave">Save INIs</button>
@@ -382,7 +387,20 @@ async function loadAudit(){
 }
 async function loadSettings(){
   const s = await api('/api/settings');
-  $('#inikeys').innerHTML = (s.keys||[]).map(k => `<div class="row"><label style="min-width:22em">${esc(k.file)} <code>${esc(k.key)}</code></label><input data-ini="${esc(k.file)}" data-key="${esc(k.key)}" value="${esc(k.value)}" style="min-width:12em"/></div>`).join('');
+  const openCats = new Set(['Durability','Harvesting','Combat','Survival']);
+  const fileShort = { 'UserServerCustomSettings.ini':'custom', 'UserGame.ini':'game', 'UserEngine.ini':'engine' };
+  const cats = [];
+  for (const k of (s.keys||[])){
+    if (!cats.includes(k.cat)) cats.push(k.cat);
+  }
+  $('#inikeys').innerHTML = cats.map(cat => {
+    const rows = (s.keys||[]).filter(k => k.cat===cat).map(k => `<div class="row">
+      <label style="min-width:26em"><span class="ini-file">${esc(fileShort[k.file]||k.file)}</span>
+        <code>${esc(k.key)}</code>${k.hint?`<span class="ini-hint">${esc(k.hint)}</span>`:''}</label>
+      <input data-ini="${esc(k.file)}" data-key="${esc(k.key)}" value="${esc(k.value)}" style="min-width:12em"/>
+    </div>`).join('');
+    return `<details class="ini-cat"${openCats.has(cat)?' open':''}><summary>${esc(cat)}</summary>${rows}</details>`;
+  }).join('');
   const c = await api('/api/config');
   $('#wen').checked = !!(c.welcome||{}).enabled;
   $('#witems').value = ((c.welcome||{}).items||[]).map(i => (i.item||'') + ',' + (i.qty||1)).join('\n');
