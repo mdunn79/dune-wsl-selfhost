@@ -9,6 +9,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -20,9 +21,44 @@ APPINFO = Path("/home/dune/.dune/last-appinfo.txt")
 WSLCONFIG = Path("/mnt/c/Users/mdunn/.wslconfig")
 _NET_CACHE = {"t": 0.0, "v": {}}
 _HEALTH_CACHE = {"t": 0.0, "v": {}}
+_SETTINGS_META_CACHE = {"t": 0.0, "v": {}}
+_COL_CACHE: dict[str, set[str]] = {}
 _LAST_ONLINE: set = set()
 _WAS_JOINABLE = False
 _ONLINE_READY = False
+
+GM_GATES = {
+    "grant-item": "grants",
+    "welcome-now": "grants",
+    "award-xp": "grants",
+    "skill-points": "grants",
+    "skill-module": "grants",
+    "refill-water": "grants",
+    "clean-inventory": "wipe_inventory",
+    "reset-progression": "reset_progression",
+    "teleport": "teleport",
+    "teleport-to-player": "teleport",
+    "spawn-vehicle": "spawn_vehicle",
+}
+GM_PHRASES = {
+    "clean-inventory": "WIPE",
+    "reset-progression": "RESET",
+}
+LIVE_EFFECT_OPS = set(GM_GATES) | {
+    "start",
+    "stop",
+    "restart",
+    "apply-update",
+    "apply-settings",
+    "restore-backup",
+    "advertise-auto",
+    "advertise-lan",
+    "schedule-restart",
+    "kick",
+    "ban",
+    "broadcast",
+    "whitelist-enable",
+}
 
 def _k(file: str, key: str, cat: str, hint: str = "") -> dict:
     return {"file": file, "key": key, "cat": cat, "hint": hint}
@@ -120,6 +156,7 @@ CATALOG = [
     ("Complex machinery T5", "T5MachineComponent"),
     ("Complex machinery T6", "T6MachineComponent"),
     ("Advanced servok", "AdvancedServok"),
+    ("Calibrated servok", "T3MiningGalleryComponent1"),
     ("Particle capacitor", "ParticleCapacitor"),
     ("Carbide scraps", "CarbideScraps"),
     ("Plastanium ingot", "PlastaniumIngot"),
@@ -170,6 +207,10 @@ def bind(main) -> None:
     M.tick_extras = tick_extras
     M.enrich_players = enrich_players
     M.enrich_status = enrich_status
+    M.prepare_gm = prepare_gm
+    M.finish_gm = finish_gm
+    M.stamp_op = stamp_op
+    M.world_objects = world_objects
 
 
 def cfg() -> dict:
@@ -181,6 +222,16 @@ def cfg() -> dict:
     d.setdefault("schedule", None)
     d.setdefault("motd", "")
     d.setdefault("waypoints", [])
+    d.setdefault(
+        "gates",
+        {
+            "grants": True,
+            "wipe_inventory": True,
+            "reset_progression": True,
+            "teleport": True,
+            "spawn_vehicle": True,
+        },
+    )
     return d
 
 
@@ -239,6 +290,7 @@ def enrich_status(payload: dict) -> dict:
     payload["net"] = net_health()
     payload["schedule"] = cfg().get("schedule")
     payload["welcome_on"] = bool((cfg().get("welcome") or {}).get("enabled"))
+    payload["settings_meta"] = settings_meta()
     return payload
 
 
@@ -364,6 +416,17 @@ def host_health() -> dict:
     return outp
 
 
+def _unreal_log_ts(line: str) -> float | None:
+    m = re.search(r"\[(\d{4})\.(\d{2})\.(\d{2})-(\d{2})\.(\d{2})\.(\d{2})", line or "")
+    if not m:
+        return None
+    try:
+        y, mo, d, h, mi, s = (int(x) for x in m.groups())
+        return datetime(y, mo, d, h, mi, s, tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return None
+
+
 def net_health() -> dict:
     now = time.time()
     if _NET_CACHE["v"] and now - _NET_CACHE["t"] < 12:
@@ -373,14 +436,19 @@ def net_health() -> dict:
     if not n or not pod:
         return {"error": "no survival pod"}
     _c, logs = M.run(
-        ["sudo", "kubectl", "logs", "-n", n, pod, "--since=15m", "--tail=400"],
+        ["sudo", "kubectl", "logs", "-n", n, pod, "--since=2h", "--tail=3000"],
         timeout=20,
         redact_out=True,
     )
-    expired = len(re.findall(r"ServerMove: TimeStamp expired", logs))
+    cutoff = now - 900
+    expired = 0
     addrs = {}
-    for ip in re.findall(r"RemoteAddr:\s*([0-9.]+)", logs):
-        addrs[ip] = addrs.get(ip, 0) + 1
+    for ln in logs.splitlines():
+        ts = _unreal_log_ts(ln)
+        if "ServerMove: TimeStamp expired" in ln and (ts is None or ts >= cutoff):
+            expired += 1
+        for ip in re.findall(r"RemoteAddr:\s*([0-9.]+)", ln):
+            addrs[ip] = addrs.get(ip, 0) + 1
     pub = ""
     adv = M.advertise_status()
     m = re.search(r"HOST_DATACENTER=(\S+)", adv)
@@ -397,7 +465,14 @@ def net_health() -> dict:
         elif re.match(r"^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)", ip):
             kind = "lan"
         classified.append({"ip": ip, "count": c, "kind": kind})
-    outp = {"expired_15m": expired, "remotes": classified, "advertise": pub, "lan": lan}
+    outp = {
+        "expired_15m": expired,
+        "remotes": classified,
+        "advertise": pub,
+        "lan": lan,
+        "remote_window": "2h",
+        "remote_note": "Survival LogNet RemoteAddr (connect/error lines, up to 2h). Not a live client list.",
+    }
     _NET_CACHE["t"] = now
     _NET_CACHE["v"] = outp
     return outp
@@ -451,29 +526,85 @@ def ini_set(text: str, key: str, value: str) -> str:
     return text.rstrip() + "\n" + line + "\n"
 
 
+def _ini_pair(fname: str) -> tuple[str, str, bool]:
+    code, out = fb_exec(["cat", "/srv/UserSettings/" + fname])
+    live = out if code == 0 else ""
+    fb_ok = code == 0
+    setup = ""
+    p = SETUP_CFG / fname
+    if p.is_file():
+        setup = p.read_text(encoding="utf-8", errors="replace")
+    if not fb_ok:
+        live = setup
+    return live, setup, fb_ok
+
+
 def read_settings() -> dict:
-    files = {}
+    files: dict[str, tuple[str, str, bool]] = {}
     values = []
+    drift_n = 0
     for spec in INI_KEYS:
         fname, key = spec["file"], spec["key"]
         if fname not in files:
-            code, out = fb_exec(["cat", "/srv/UserSettings/" + fname])
-            files[fname] = out if code == 0 else ""
-            if code != 0 and (SETUP_CFG / fname).is_file():
-                files[fname] = (SETUP_CFG / fname).read_text(encoding="utf-8", errors="replace")
-        val = ini_get(files[fname], key)
+            files[fname] = _ini_pair(fname)
+        live_text, setup_text, fb_ok = files[fname]
+        live_val = ini_get(live_text, key)
+        setup_val = ini_get(setup_text, key)
+        val = live_val or setup_val
         if key == "m_BaseBackupToolTimeRestrictionInSeconds" and not val:
             val = "604800"
+        drift = bool(fb_ok) and live_val != setup_val
+        if drift:
+            drift_n += 1
         values.append(
             {
                 "file": fname,
                 "key": key,
                 "value": val,
+                "setup_value": setup_val,
+                "drift": drift,
                 "cat": spec["cat"],
                 "hint": spec.get("hint") or "",
             }
         )
-    return {"keys": values}
+    meta = settings_meta(values=values, drift_count=drift_n)
+    return {"keys": values, **meta}
+
+
+def settings_meta(values: list | None = None, drift_count: int | None = None) -> dict:
+    now = time.time()
+    c = cfg()
+    apply_ts = c.get("last_apply_ts")
+    restart_ts = c.get("last_restart_ts")
+    needs = False
+    if apply_ts:
+        try:
+            needs = (not restart_ts) or float(apply_ts) > float(restart_ts)
+        except (TypeError, ValueError):
+            needs = True
+    if values is None:
+        cached = _SETTINGS_META_CACHE["v"] or {}
+        return {
+            "drift_count": cached.get("drift_count") or 0,
+            "drift_keys": cached.get("drift_keys") or [],
+            "last_apply_ts": apply_ts,
+            "last_restart_ts": restart_ts,
+            "maps_need_restart": needs,
+            "gates": c.get("gates") or {},
+        }
+    drifted = [k for k in (values or []) if k.get("drift")]
+    n = drift_count if drift_count is not None else len(drifted)
+    out = {
+        "drift_count": n,
+        "drift_keys": ["%s:%s" % (k.get("file"), k.get("key")) for k in drifted[:12]],
+        "last_apply_ts": apply_ts,
+        "last_restart_ts": restart_ts,
+        "maps_need_restart": needs,
+        "gates": c.get("gates") or {},
+    }
+    _SETTINGS_META_CACHE["t"] = now
+    _SETTINGS_META_CACHE["v"] = out
+    return out
 
 
 def write_settings(updates: list) -> tuple[bool, str]:
@@ -524,6 +655,337 @@ def _psql_rows(sql: str) -> list[list[str]]:
     return [ln.split("\t") for ln in out.splitlines() if ln.strip()]
 
 
+def _ident(name: str) -> str:
+    return name if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name or "") else ""
+
+
+def table_cols(table: str) -> set[str]:
+    t = _ident(table)
+    if not t:
+        return set()
+    if t not in _COL_CACHE:
+        rows = _psql_rows(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema='dune' AND table_name='%s'" % t
+        )
+        _COL_CACHE[t] = {r[0] for r in rows if r}
+    return _COL_CACHE[t]
+
+
+def _first_col(cols: set[str], names: tuple[str, ...]) -> str:
+    for n in names:
+        if n in cols:
+            return n
+    return ""
+
+
+def prepare_gm(body: dict):
+    op = str(body.get("op") or "")
+    dry = bool(body.get("dry_run"))
+    pid = M.normalize_player_id(str(body.get("player_id") or ""))
+    gates = cfg().get("gates") or {}
+    gate = GM_GATES.get(op)
+    if gate and not gates.get(gate, True):
+        return {"ok": False, "error": "gate %s is off (Settings)" % gate, "dry_run": dry}
+    phrase = GM_PHRASES.get(op)
+    if phrase and str(body.get("confirm_text") or "").strip() != phrase:
+        return {"ok": False, "error": "type %s to confirm" % phrase, "dry_run": dry}
+    if dry and op in LIVE_EFFECT_OPS:
+        preview = {
+            "ok": True,
+            "dry_run": True,
+            "op": op,
+            "out": "dry-run: %s was not sent to the world" % op,
+        }
+        if pid:
+            preview["player"] = player_row(pid) or {"player_id": pid}
+        return preview
+    return None
+
+
+def finish_gm(body: dict, result: dict) -> dict:
+    if not isinstance(result, dict):
+        return result
+    result.setdefault("dry_run", bool(body.get("dry_run")))
+    pid = M.normalize_player_id(str(body.get("player_id") or ""))
+    op = str(body.get("op") or "")
+    if pid and op in GM_GATES and not body.get("dry_run"):
+        try:
+            result["player"] = player_detail(pid)
+        except Exception:
+            result["player"] = player_row(pid)
+    return result
+
+
+def stamp_op(op: str, ok: bool) -> None:
+    if not ok:
+        return
+    now = time.time()
+    if op == "apply-settings":
+        c = cfg()
+        c["last_apply_ts"] = now
+        save_cfg(c)
+        _SETTINGS_META_CACHE["t"] = 0.0
+    elif op == "restart":
+        c = cfg()
+        c["last_restart_ts"] = now
+        save_cfg(c)
+        _SETTINGS_META_CACHE["t"] = 0.0
+
+
+def _short_class(cls: str) -> str:
+    s = (cls or "").rsplit("/", 1)[-1]
+    return s.replace("_C", "").replace("BP_", "").replace("##", "")
+
+
+def _owner_index() -> dict:
+    rows = _psql_rows(
+        'SELECT COALESCE(ps.player_controller_id::text,\'\'), COALESCE(a."user"::text,\'\'), '
+        "COALESCE(ps.character_name,''), COALESCE(ps.last_avatar_activity::text,''), "
+        "COALESCE(ps.character_state::text,''), COALESCE(ps.transfer_count::text,'0'), "
+        "COALESCE(ps.account_id::text,''), COALESCE(ps.player_pawn_id::text,''), "
+        "COALESCE(ps.id::text,''), COALESCE(ps.player_state_id::text,'') "
+        "FROM dune.player_state ps LEFT JOIN dune.accounts a ON a.id = ps.account_id"
+    )
+    idx = {"controller": {}, "account": {}, "pawn": {}, "state": {}, "fls": {}}
+    for r in rows:
+        rec = {
+            "controller_id": r[0] if len(r) > 0 else "",
+            "player_id": r[1] if len(r) > 1 else "",
+            "name": r[2] if len(r) > 2 else "",
+            "last_seen": r[3] if len(r) > 3 else "",
+            "character_state": r[4] if len(r) > 4 else "",
+            "transfer_count": r[5] if len(r) > 5 else "0",
+            "account_id": r[6] if len(r) > 6 else "",
+            "pawn_id": r[7] if len(r) > 7 else "",
+            "state_id": r[8] if len(r) > 8 else "",
+        }
+        rec["transferred"] = rec["transfer_count"] not in ("", "0")
+        if rec["controller_id"]:
+            idx["controller"][rec["controller_id"]] = rec
+        if rec["account_id"]:
+            idx["account"][rec["account_id"]] = rec
+        if rec["pawn_id"]:
+            idx["pawn"][rec["pawn_id"]] = rec
+        if rec["state_id"]:
+            idx["state"][rec["state_id"]] = rec
+        extra_state = r[9] if len(r) > 9 else ""
+        if extra_state:
+            idx["state"].setdefault(extra_state, rec)
+        if rec["player_id"]:
+            idx["fls"][rec["player_id"].upper()] = rec
+    return idx
+
+
+def _lookup_owner(idx: dict, raw: str) -> dict:
+    raw = (raw or "").strip()
+    if not raw or raw in ("0", "None", "(null)"):
+        return {}
+    return (
+        idx["controller"].get(raw)
+        or idx["state"].get(raw)
+        or idx["account"].get(raw)
+        or idx["pawn"].get(raw)
+        or idx["fls"].get(raw.upper())
+        or {}
+    )
+
+
+def _attach_owner(row: dict, idx: dict, owner_raw: str) -> dict:
+    raw = (owner_raw or "").strip()
+    rec = _lookup_owner(idx, raw)
+    row["owner_raw"] = raw
+    row["owner_id"] = rec.get("player_id") or raw
+    row["owner_name"] = rec.get("name") or ""
+    row["last_seen"] = rec.get("last_seen") or ""
+    row["character_state"] = rec.get("character_state") or ""
+    row["transferred"] = bool(rec.get("transferred"))
+    state_l = (rec.get("character_state") or "").lower()
+    if not raw:
+        row["orphan"] = True
+        row["orphan_reason"] = "unowned / world"
+        row["owner_id"] = ""
+    elif not rec:
+        row["orphan"] = True
+        row["orphan_reason"] = "no matching player_state"
+    elif rec.get("transferred") and not rec.get("last_seen"):
+        row["orphan"] = True
+        row["orphan_reason"] = "transferred, never seen here"
+    elif not rec.get("last_seen"):
+        row["orphan"] = True
+        row["orphan_reason"] = "never seen on this world"
+    elif state_l in ("deleted",):
+        row["orphan"] = True
+        row["orphan_reason"] = rec.get("character_state") or state_l
+    else:
+        row["orphan"] = False
+        row["orphan_reason"] = ""
+    return row
+
+
+def _list_table(table: str, kind: str, idx: dict, where: str = "") -> list[dict]:
+    t = _ident(table)
+    cols = table_cols(t)
+    if not cols:
+        return []
+    idc = _first_col(cols, ("id", "guid", "uid"))
+    mapc = _first_col(cols, ("map", "map_name", "building_blueprint_map", "partition", "world"))
+    namec = _first_col(cols, ("name", "base_backup_name", "display_name", "class_name", "template_name", "vehicle_name"))
+    ownerc = _first_col(
+        cols,
+        (
+            "last_placed_by_player_id",
+            "player_id",
+            "owner_id",
+            "last_edited_by_player_id",
+            "character_id",
+            "account_id",
+            "player_controller_id",
+            "controller_id",
+            "owner_account_id",
+        ),
+    )
+    itemc = _first_col(cols, ("item_id", "class_name", "vehicle_class", "template"))
+    if not idc:
+        return []
+    sel = ["%s::text" % idc]
+    sel.append("%s::text" % mapc if mapc else "''")
+    sel.append("%s::text" % namec if namec else "''")
+    sel.append("%s::text" % ownerc if ownerc else "''")
+    sel.append("%s::text" % itemc if itemc else "''")
+    sql = "SELECT %s FROM dune.%s" % (", ".join(sel), t)
+    if where:
+        sql += " WHERE " + where
+    sql += " LIMIT 400"
+    out = []
+    for r in _psql_rows(sql):
+        rec = {
+            "kind": kind,
+            "source": t,
+            "id": r[0] if r else "",
+            "map": r[1] if len(r) > 1 else "",
+            "name": r[2] if len(r) > 2 else "",
+            "class_name": r[4] if len(r) > 4 else "",
+        }
+        _attach_owner(rec, idx, r[3] if len(r) > 3 else "")
+        out.append(rec)
+    return out
+
+
+def world_objects(kind: str = "all") -> dict:
+    """Read-only listing. SELECT only; never UPDATE/DELETE.
+
+    Funcom stores building.owner_id and actors.owner_account_id as null on this
+    world. Owners come from building_instances.last_placed_by_player_id
+    (controller id) and permission_actor_rank.player_id (rank 1).
+    """
+    idx = _owner_index()
+    bases: list[dict] = []
+    vehicles: list[dict] = []
+
+    for r in _psql_rows(
+        "SELECT b.id::text, COALESCE(a.map,''), COALESCE(a.class,''), "
+        "COALESCE((SELECT bi.last_placed_by_player_id::text FROM dune.building_instances bi "
+        " WHERE bi.building_id = b.id AND COALESCE(bi.last_placed_by_player_id,0) <> 0 "
+        " GROUP BY bi.last_placed_by_player_id ORDER BY COUNT(*) DESC LIMIT 1), ''), "
+        "COALESCE((SELECT COUNT(*)::text FROM dune.building_instances bi WHERE bi.building_id = b.id),'0') "
+        "FROM dune.buildings b LEFT JOIN dune.actors a ON a.id = b.id LIMIT 400"
+    ):
+        rec = {
+            "kind": "building",
+            "source": "buildings",
+            "id": r[0] if r else "",
+            "map": r[1] if len(r) > 1 else "",
+            "class_name": r[2] if len(r) > 2 else "",
+            "pieces": r[4] if len(r) > 4 else "0",
+        }
+        rec["name"] = "%s (%s pieces)" % (_short_class(rec["class_name"]) or "building", rec["pieces"])
+        _attach_owner(rec, idx, r[3] if len(r) > 3 else "")
+        bases.append(rec)
+
+    for r in _psql_rows(
+        "SELECT pa.actor_id::text, COALESCE(a.map,''), COALESCE(pa.actor_name,''), "
+        "COALESCE(a.class,''), r.player_id::text "
+        "FROM dune.permission_actor pa "
+        "JOIN dune.permission_actor_rank r ON r.permission_actor_id = pa.actor_id AND r.rank = 1 "
+        "LEFT JOIN dune.actors a ON a.id = pa.actor_id "
+        "WHERE pa.actor_type = 4 LIMIT 400"
+    ):
+        rec = {
+            "kind": "claim",
+            "source": "permission_actor",
+            "id": r[0] if r else "",
+            "map": r[1] if len(r) > 1 else "",
+            "name": (r[2] if len(r) > 2 else "") or _short_class(r[3] if len(r) > 3 else ""),
+            "class_name": r[3] if len(r) > 3 else "",
+        }
+        _attach_owner(rec, idx, r[4] if len(r) > 4 else "")
+        bases.append(rec)
+
+    bases.extend(_list_table("building_blueprints", "blueprint", idx))
+    bases.extend(_list_table("base_backups", "backup", idx))
+
+    for r in _psql_rows(
+        "SELECT v.id::text, COALESCE(a.map,''), COALESCE(a.class,''), "
+        "COALESCE((SELECT r.player_id::text FROM dune.permission_actor_rank r "
+        " JOIN dune.permission_actor pa ON pa.actor_id = r.permission_actor_id "
+        " WHERE pa.actor_id = v.id AND r.rank = 1 LIMIT 1), ''), "
+        "COALESCE((SELECT rv.character_id::text FROM dune.recovered_vehicles rv "
+        " WHERE rv.vehicle_id = v.id LIMIT 1), '') "
+        "FROM dune.vehicles v LEFT JOIN dune.actors a ON a.id = v.id LIMIT 400"
+    ):
+        cls = r[2] if len(r) > 2 else ""
+        if "Fabricator" in (cls or ""):
+            continue
+        rec = {
+            "kind": "vehicle",
+            "source": "vehicles",
+            "id": r[0] if r else "",
+            "map": r[1] if len(r) > 1 else "",
+            "class_name": cls,
+            "name": _short_class(cls) or ("vehicle " + (r[0] or "")),
+        }
+        owner = (r[3] if len(r) > 3 else "") or (r[4] if len(r) > 4 else "")
+        _attach_owner(rec, idx, owner)
+        if (r[4] if len(r) > 4 else "") and not (r[3] if len(r) > 3 else ""):
+            rec["name"] = (rec.get("name") or "") + " (recovered)"
+        vehicles.append(rec)
+
+    seen_owners: dict[str, dict] = {}
+    for item in bases + vehicles:
+        if not item.get("orphan"):
+            continue
+        oid = item.get("owner_id") or item.get("owner_raw") or "(unowned)"
+        rec = seen_owners.get(oid)
+        if rec is None:
+            rec = {
+                "owner_id": oid if oid != "(unowned)" else "",
+                "owner_name": item.get("owner_name") or ("unowned / world" if oid == "(unowned)" else ""),
+                "last_seen": item.get("last_seen") or "",
+                "reason": item.get("orphan_reason") or "",
+                "bases": 0,
+                "vehicles": 0,
+            }
+            seen_owners[oid] = rec
+        if item.get("kind") == "vehicle":
+            rec["vehicles"] += 1
+        else:
+            rec["bases"] += 1
+    orphans = list(seen_owners.values())
+    if kind == "vehicles":
+        return {"ok": True, "items": vehicles, "count": len(vehicles)}
+    if kind == "orphans":
+        return {"ok": True, "items": orphans, "count": len(orphans)}
+    if kind == "bases":
+        return {"ok": True, "items": bases, "count": len(bases)}
+    return {
+        "ok": True,
+        "bases": bases,
+        "vehicles": vehicles,
+        "orphans": orphans,
+        "count": len(bases) + len(vehicles),
+    }
+
 def player_row(pid: str) -> dict:
     pid = M.normalize_player_id(pid).replace("'", "")
     rows = _psql_rows(
@@ -538,20 +1000,25 @@ def player_row(pid: str) -> dict:
         "FROM dune.player_state ps "
         "LEFT JOIN dune.accounts a ON a.id = ps.account_id "
         "LEFT JOIN dune.player_faction f ON f.actor_id = ps.player_pawn_id "
-        "WHERE a.\"user\"::text ILIKE '%s' OR ps.account_id::text = '%s' "
-        "LIMIT 1" % (pid, pid)
+        "WHERE a.\"user\"::text ILIKE '%s' OR a.funcom_id::text ILIKE '%s' "
+        "OR ps.account_id::text = '%s' LIMIT 1" % (pid, pid, pid)
     )
     if not rows:
         return {}
     r = rows[0]
+    hid = (M.world_host_id() or "").upper()
+    fls = r[5] if len(r) > 5 else pid
+    fun = r[6] if len(r) > 6 else ""
+    if hid and (fls or "").upper() == hid:
+        fls = fun or pid
     return {
         "name": r[0] if len(r) > 0 else "",
         "last_login": r[1] if len(r) > 1 else "",
         "online_status": r[2] if len(r) > 2 else "",
         "controller_id": r[3] if len(r) > 3 else "",
         "account_id": r[4] if len(r) > 4 else "",
-        "fls_id": r[5] if len(r) > 5 else pid,
-        "funcom_id": r[6] if len(r) > 6 else "",
+        "fls_id": fls,
+        "funcom_id": fun,
         "pawn_id": r[7] if len(r) > 7 else "",
         "faction_id": r[8] if len(r) > 8 else "",
         "state_id": r[9] if len(r) > 9 else "",
@@ -799,6 +1266,9 @@ def read_admin_config() -> dict:
         "webhook_host": host,
         "welcome": c.get("welcome") or {"enabled": False, "items": []},
         "schedule": c.get("schedule"),
+        "gates": c.get("gates") or {},
+        "last_apply_ts": c.get("last_apply_ts"),
+        "last_restart_ts": c.get("last_restart_ts"),
     }
 
 
@@ -821,7 +1291,7 @@ def webhook(event: str, text: str) -> None:
 
 def extra_action(body: dict):
     op = str(body.get("op") or "")
-    pid = M.normalize_player_id(str(body.get("player_id") or ""))
+    pid = M.resolve_player_id(str(body.get("player_id") or ""))
     confirm = bool(body.get("confirm"))
 
     if op == "check-update":
@@ -925,6 +1395,12 @@ def extra_action(body: dict):
                 if name:
                     items.append({"item": name, "qty": int(it.get("qty") or 1)})
             c["welcome"] = {"enabled": bool(w.get("enabled")), "items": items[:12]}
+        if "gates" in body and isinstance(body.get("gates"), dict):
+            g = dict(c.get("gates") or {})
+            for k in ("grants", "wipe_inventory", "reset_progression", "teleport", "spawn_vehicle"):
+                if k in body["gates"]:
+                    g[k] = bool(body["gates"][k])
+            c["gates"] = g
         save_cfg(c)
         return {"ok": True, "out": "saved"}
     if op == "save-settings":
