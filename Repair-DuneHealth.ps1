@@ -1,5 +1,6 @@
-# 5-minute join/admin health. No Steam, depot, advertise, FLS, battlegroup start, or wsl --shutdown.
-# WAN down: local binds only. Skip while Restart-DuneBattlegroup.ps1 is running.
+# 5-minute join/admin health. No Steam, depot, advertise, FLS, or wsl --shutdown.
+# Map pods missing: dune-ensure-runtime.sh only. Not Ready with pods present: log only.
+# WAN down: local binds (and runtime if pods are gone). Skip while Restart-DuneBattlegroup.ps1 is running.
 # Install: .\Install-DuneScheduledHealth.ps1   Log: repair-dune-health.log
 
 $ErrorActionPreference = "Stop"
@@ -60,7 +61,7 @@ try {
         return
     }
     if (-not (Test-WanUp)) {
-        Write-Log "WAN down; local repairs only (no FLS/advertise/start)"
+        Write-Log "WAN down; local repairs only (no FLS/advertise)"
     }
     $exports = ""
     if ($LanIp -and $LanIp -ne "192.168.0.10") { $exports = "export DUNE_LAN_IP='$LanIp'; " }

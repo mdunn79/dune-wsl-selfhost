@@ -198,7 +198,7 @@ That registers **DuneBattlegroupMaintain**: Daily **6:00 AM** local, repeat **ev
 
 Uninstall: `.\Install-DuneScheduledMaintain.ps1 -Uninstall`. If you already created a hand-made task that runs `Restart-DuneBattlegroup.ps1`, disable or delete that duplicate first so two jobs do not overlap.
 
-**Join/admin health (every 5 minutes):** a separate task rebinds LAN TCP `31982` / `31519` / `18888` if a `kubectl port-forward` died, and starts `dune-admin.service` if it is down. It does **not** query Steam, apply a depot, refresh advertise IP, rewrite FLS DNS, or `battlegroup start`. If home WAN is down (no TCP 443 to `1.1.1.1` / `8.8.8.8`), it still does those local binds and then stops — it will not try to “fix” Funcom while the ISP is out. It skips the tick while hourly maintain is running. Log: `repair-dune-health.log`.
+**Join/admin health (every 5 minutes):** a separate task rebinds LAN TCP `31982` / `31519` / `18888` if a `kubectl port-forward` died, and starts `dune-admin.service` if it is down. If Survival and Overmap **pods are missing** (or k3s has no world namespace), it runs `dune-ensure-runtime.sh` (flannel / `spec.stop` / start). It does **not** query Steam, apply a depot, refresh advertise IP, or rewrite FLS DNS. Pods present but not Ready is a log line only. If home WAN is down (no TCP 443 to `1.1.1.1` / `8.8.8.8`), it still does local binds and runtime restore, and it will not touch Funcom listing/FLS. It skips the tick while hourly maintain is running. Log: `repair-dune-health.log`.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-DuneScheduledHealth.ps1"

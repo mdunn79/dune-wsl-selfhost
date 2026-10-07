@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# 5-minute local health: missing LAN join binds + dune-admin.
-# No Steam, depot, advertise, FLS, hosts, battlegroup start, or k3s restart.
+# 5-minute local health: missing LAN join binds, dune-admin, and runtime only if map pods are gone.
+# No Steam, depot, advertise, or FLS. Not Ready (pods still there) does not start maps.
 set -uo pipefail
 export HOME=/home/dune
+RUNTIME=/home/dune/.dune/bin/dune-ensure-runtime.sh
 echo "=== dune-repair-health begin ==="
 
 if pgrep -f '/home/dune/.dune/bin/dune-maintain.sh' >/dev/null 2>&1; then
@@ -18,11 +19,53 @@ else
   sudo systemctl start dune-admin.service && echo "dune-admin started" || echo "WARNING: dune-admin start failed" >&2
 fi
 
-NS="$(timeout 12 sudo kubectl get ns --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null | grep '^funcom-seabass-' | head -n1 || true)"
-if [ -z "$NS" ]; then
-  echo "k3s/namespace not answering; skip binds (hourly maintain restores runtime)"
+k3s_up() { timeout 5 sudo kubectl get --raw=/readyz >/dev/null 2>&1; }
+
+run_runtime() {
+  if [ ! -x "$RUNTIME" ]; then
+    echo "WARNING: $RUNTIME missing" >&2
+    return 1
+  fi
+  echo "map pods missing or k3s down; running dune-ensure-runtime.sh (no Steam/advertise)"
+  "$RUNTIME" || true
+}
+
+list_ns() {
+  timeout 12 sudo kubectl get ns --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null
+}
+
+pick_ns() {
+  printf '%s\n' "$1" | grep '^funcom-seabass-' | head -n1
+}
+
+if ! k3s_up; then
+  run_runtime
+  if ! k3s_up; then
+    echo "k3s still not ready; skip binds"
+    echo "=== dune-repair-health end ==="
+    exit 0
+  fi
+fi
+
+ns_list="$(list_ns)"
+ns_rc=$?
+if [ "$ns_rc" -ne 0 ]; then
+  echo "kubectl get ns failed (rc $ns_rc); not treating world as missing"
   echo "=== dune-repair-health end ==="
   exit 0
+fi
+NS="$(pick_ns "$ns_list")"
+if [ -z "$NS" ]; then
+  run_runtime
+  ns_list="$(list_ns)"
+  ns_rc=$?
+  NS=""
+  [ "$ns_rc" -eq 0 ] && NS="$(pick_ns "$ns_list")"
+  if [ -z "$NS" ]; then
+    echo "no funcom-seabass namespace after runtime restore; skip binds"
+    echo "=== dune-repair-health end ==="
+    exit 0
+  fi
 fi
 
 BG="${NS#funcom-seabass-}"
@@ -35,13 +78,34 @@ if [ -z "$LAN_IP" ]; then
   exit 0
 fi
 
-pods="$(timeout 12 sudo kubectl get pods -n "$NS" --no-headers 2>/dev/null || true)"
+list_pods() {
+  timeout 12 sudo kubectl get pods -n "$NS" --no-headers 2>/dev/null
+}
+
+pods="$(list_pods)"
+pods_rc=$?
+if [ "$pods_rc" -ne 0 ]; then
+  echo "kubectl get pods failed (rc $pods_rc); not treating maps as missing"
+  pods=""
+else
+  surv_any="$(printf '%s\n' "$pods" | awk '/sg-survival/ {print $1; exit}')"
+  over_any="$(printf '%s\n' "$pods" | awk '/sg-overmap/ {print $1; exit}')"
+  if [ -z "$surv_any" ] && [ -z "$over_any" ]; then
+    run_runtime
+    pods="$(list_pods)"
+    pods_rc=$?
+    [ "$pods_rc" -ne 0 ] && pods=""
+  fi
+fi
+
 surv="$(printf '%s\n' "$pods" | awk '/sg-survival-1/ && $3=="Running" && $2=="1/1" {print $1; exit}')"
 over="$(printf '%s\n' "$pods" | awk '/sg-overmap/ && $3=="Running" && $2=="1/1" {print $1; exit}')"
-if [ -n "$surv" ] && [ -n "$over" ]; then
-  echo "maps Ready (Survival+Overmap Running 1/1)"
-else
-  echo "maps not Running 1/1; not starting battlegroup"
+if [ "$pods_rc" -eq 0 ]; then
+  if [ -n "$surv" ] && [ -n "$over" ]; then
+    echo "maps Ready (Survival+Overmap Running 1/1)"
+  else
+    echo "maps not Running 1/1; not calling battlegroup start (hourly maintain if they stay down)"
+  fi
 fi
 
 listen() { sudo ss -ltn | grep -qE ":$1\\b"; }
