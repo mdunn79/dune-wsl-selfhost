@@ -1,6 +1,6 @@
 # LAN web admin (TCP 18889)
 
-The WSL self-host pack includes a small Python admin UI for the Funcom battlegroup. The installer and `Restart-DuneBattlegroup.ps1` copy it into `/home/dune/.dune/bin/` and enable `dune-admin.service`.
+The WSL self-host pack includes a small Python admin UI for the Funcom battlegroup. The installer and `Restart-DuneBattlegroup.ps1` copy it into `/home/dune/.dune/bin/` and enable `dune-admin.service`. `Repair-DuneHealth.ps1` (5-minute task) starts the unit if it died; it does not recopy helpers.
 
 It binds **only** the host LAN IPv4 (`LanIp`, never `0.0.0.0`). Open it from a browser on the host or another PC on the same LAN. Do **not** port-forward TCP `18889` (or Funcom’s File Browser on `18888`) unless you intend to expose those UIs to the internet.
 

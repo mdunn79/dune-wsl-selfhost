@@ -83,3 +83,4 @@ Write-Host "  If a run is already in progress, the next tick is skipped (IgnoreN
 Write-Host "  Log: $(Join-Path $here 'restart-dune-battlegroup.log')"
 Write-Host "Uninstall: powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Uninstall"
 Write-Host "This did not start a maintain run. Right-click the task -> Run, or wait for the next trigger."
+Write-Host "Join-port health (every 5 min, no depot/advertise): Install-DuneScheduledHealth.ps1"
