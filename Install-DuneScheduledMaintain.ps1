@@ -28,6 +28,12 @@ if (-not (Test-Path $script)) {
 if ($Uninstall) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
     Write-Host "Removed scheduled task $TaskName (if it existed)."
+    foreach ($t in @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
+        @($_.Actions) -match "Restart-DuneBattlegroup"
+    })) {
+        Unregister-ScheduledTask -TaskName $t.TaskName -Confirm:$false
+        Write-Host ("Removed duplicate scheduled task {0}." -f $t.TaskName)
+    }
     return
 }
 
@@ -41,16 +47,12 @@ try {
     throw "DailyAt must be 24-hour HH:mm (got '$DailyAt')"
 }
 
-$others = @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
+foreach ($t in @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
     $_.TaskName -ne $TaskName -and
     @($_.Actions) -match "Restart-DuneBattlegroup"
-})
-if ($others.Count -gt 0) {
-    Write-Host "WARNING: another task already runs Restart-DuneBattlegroup.ps1:"
-    foreach ($t in $others) {
-        Write-Host ("  {0}" -f $t.TaskName)
-    }
-    Write-Host "Disable or delete the duplicate so hourly ticks do not overlap."
+})) {
+    Unregister-ScheduledTask -TaskName $t.TaskName -Confirm:$false
+    Write-Host ("Removed duplicate scheduled task {0}." -f $t.TaskName)
 }
 
 $ps = (Get-Command powershell.exe).Source
