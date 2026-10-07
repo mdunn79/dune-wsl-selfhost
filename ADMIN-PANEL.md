@@ -13,6 +13,8 @@ It binds **only** the host LAN IPv4 (`LanIp`, never `0.0.0.0`). Open it from a b
 
 `Get-DuneStatus.ps1` prints the URL when `LanIp` is set. After a helper sync, `systemctl is-active dune-admin.service` should be `active`.
 
+**Clocks** in the panel follow the **browser’s time zone** (`Intl` IANA name in the header, e.g. `America/Los_Angeles`). Postgres `timestamptz` strings (`…+00`) and Unix epoch stamps (first-seen, Steam check, INI apply, backups, scheduled restart) are converted with `toLocaleString` plus a short zone label (`PDT`). Naive audit stamps from WSL `strftime` are shown as local wall clock. Public `/status` is unchanged. The schedule picker stays `datetime-local` (already browser-local).
+
 ## What it can do
 
 | Tab | Use |

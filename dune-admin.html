@@ -51,6 +51,7 @@ a{color:var(--acc)}
 <header>
   <h1>Dune admin</h1>
   <span id="joinpill" class="pill">…</span>
+  <span id="tzpill" class="muted"></span>
   <label class="muted"><input type="checkbox" id="autoref" checked/> Auto-refresh</label>
   <label id="drylab" class="muted" title="When checked, GM tools, broadcast, restart, apply, and advertise return a preview and are not sent to the world."><input type="checkbox" id="dryrun" checked/> Dry-run (nothing sent to the world)</label>
   <nav>
@@ -359,11 +360,30 @@ async function gm(body){
   }
   return d;
 }
-function fmtTs(ts){
-  if (!ts) return '';
-  const n = Number(ts);
-  if (!n) return String(ts);
-  return new Date(n*1000).toLocaleString();
+function parseWhen(v){
+  if (v == null || v === '') return null;
+  if (typeof v === 'number' || (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(String(v).trim()))) {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n === 0) return null;
+    return new Date(n > 1e12 ? n : n * 1000);
+  }
+  let s = String(v).trim();
+  if (!s) return null;
+  s = s.replace(' ', 'T');
+  s = s.replace(/([+-]\d{2})$/, '$1:00');
+  s = s.replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+function fmtWhen(v){
+  const d = parseWhen(v);
+  if (!d) return (v == null || v === '') ? '' : String(v);
+  return d.toLocaleString(undefined, { timeZoneName: 'short' });
+}
+function fmtTs(ts){ return fmtWhen(ts); }
+function browserTz(){
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; }
+  catch (e) { return ''; }
 }
 $('#lf').onsubmit = async (e)=>{
   e.preventDefault();
@@ -418,6 +438,7 @@ async function boot(){
     $('#dryrun').onchange = syncDry;
     syncDry();
   }
+  if ($('#tzpill')) $('#tzpill').textContent = browserTz() || '';
   CATALOG = await api('/api/catalog');
   fillCatalog(CATALOG);
   if (!(CATALOG.meta||{}).wiki || (CATALOG.meta||{}).fetching){
@@ -480,7 +501,7 @@ function renderWorld(st){
   const rem = (n.remotes||[]).map(x => `<tr><td>${esc(x.ip)}</td><td>${esc(x.kind)}</td><td>${x.count}</td></tr>`).join('');
   const notes = (st.join_notes||[]).join(' · ') || (j ? 'Survival, Overmap, and join ports are up' : '');
   const sch = st.schedule;
-  $('#rsnow').textContent = sch && sch.at ? ('Scheduled at ' + new Date(sch.at*1000).toLocaleString() + (sch.announced?' (countdown sent)':'') + (sch.deferred?' (deferred: players online)':'')) : 'No restart scheduled';
+  $('#rsnow').textContent = sch && sch.at ? ('Scheduled at ' + fmtWhen(sch.at) + (sch.announced?' (countdown sent)':'') + (sch.deferred?' (deferred: players online)':'')) : 'No restart scheduled';
   const smeta = st.settings_meta || {};
   const driftN = smeta.drift_count || 0;
   const needR = smeta.maps_need_restart;
@@ -550,7 +571,7 @@ async function renderPlayers(){
     <td>${esc(p.name||'')}</td>
     <td>${p.online?'<span class="ok">online</span>':'<span class="muted">offline</span>'}</td>
     <td>${p.banned?'<span class="bad">ban</span>':''} ${p.whitelisted?'wl':''}</td>
-    <td>${(p.last_seen||'').trim()?esc(p.last_seen):'<span class="muted">never</span>'}${p.transferred?' <span class="muted">xfer</span>':''}${p.first_seen?'<br><span class="muted">first '+esc(fmtTs(p.first_seen))+'</span>':''}</td>
+    <td>${(p.last_seen||'').trim()?esc(fmtWhen(p.last_seen)):'<span class="muted">never</span>'}${p.transferred?' <span class="muted">xfer</span>':''}${p.first_seen?'<br><span class="muted">first '+esc(fmtWhen(p.first_seen))+'</span>':''}</td>
     <td>${esc(p.note||'')}</td>
     <td>
       <button class="act" data-use="${esc(p.player_id)}">Use</button>
@@ -597,7 +618,7 @@ async function loadChar(id){
     <p><b>${esc(p.name)}</b> · ${(d.mentors||[]).map(esc).join(', ') || 'no mentor'} ·
        caste ${(d.castes||[]).map(esc).join(', ') || '?'} · ${esc(v.map||p.map||'')} ·
        ${esc(p.life_state||'')} / ${esc(p.online_status)} · ${esc(p.platform||'')}</p>
-    <p>FLS <code>${esc(p.fls_id)}</code> · controller ${esc(p.controller_id)} · last seen here ${(p.last_seen||'').trim()?esc(p.last_seen):'<span class="muted">never on this world</span>'}${p.transferred?(' · transferred · origin last login '+esc(p.last_login||'')):''}${d.first_seen?(' · first seen '+esc(fmtTs(d.first_seen))):''}</p>
+    <p>FLS <code>${esc(p.fls_id)}</code> · controller ${esc(p.controller_id)} · last seen here ${(p.last_seen||'').trim()?esc(fmtWhen(p.last_seen)):'<span class="muted">never on this world</span>'}${p.transferred?(' · transferred · origin last login '+esc(fmtWhen(p.last_login))):''}${d.first_seen?(' · first seen '+esc(fmtWhen(d.first_seen))):''}</p>
     <p>Health ${esc(v.health)}/${esc(v.health_max)} · water ${esc(v.hydration)} · spice ${esc(v.spice)}
        · heat ${esc(v.heat)} ${v.heatstroke?'<span class="bad">heatstroke</span>':''}
        · Eyes of Ibad ${esc(v.eyes_of_ibad)}%</p>
@@ -620,13 +641,13 @@ async function loadChar(id){
 }
 async function loadBackups(){
   const d = await api('/api/backups');
-  const rows = (d.backups||[]).map(b => `<tr><td><label><input type="radio" name="bk" value="${esc(b.name)}"/> ${esc(b.name)}</label></td><td>${Math.round((b.bytes||0)/1024)} KiB</td><td>${b.mtime?new Date(b.mtime*1000).toLocaleString():''}</td></tr>`).join('');
+  const rows = (d.backups||[]).map(b => `<tr><td><label><input type="radio" name="bk" value="${esc(b.name)}"/> ${esc(b.name)}</label></td><td>${Math.round((b.bytes||0)/1024)} KiB</td><td>${b.mtime?esc(fmtWhen(b.mtime)):''}</td></tr>`).join('');
   $('#bups').innerHTML = `<table><thead><tr><th>File</th><th>Size</th><th>When</th></tr></thead><tbody>${rows||'<tr><td colspan=3>none</td></tr>'}</tbody></table>`;
   document.querySelectorAll('input[name=bk]').forEach(r => r.onchange = ()=> { SEL_BACKUP = r.value; });
 }
 async function loadAudit(){
   const d = await api('/api/audit');
-  const rows = (d.events||[]).map(e => `<tr><td>${esc(e.ts)}</td><td>${esc(e.action)}</td><td>${esc(e.player_id||'')}</td><td>${e.ok===false?'<span class="bad">no</span>':'ok'}</td></tr>`).join('');
+  const rows = (d.events||[]).map(e => `<tr><td>${esc(fmtWhen(e.ts))}</td><td>${esc(e.action)}</td><td>${esc(e.player_id||'')}</td><td>${e.ok===false?'<span class="bad">no</span>':'ok'}</td></tr>`).join('');
   $('#auditbox').innerHTML = `<table><thead><tr><th>Time</th><th>Action</th><th>Player</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan=4>empty</td></tr>'}</tbody></table>`;
 }
 async function loadSettings(){
@@ -676,7 +697,7 @@ function objRows(items, extra){
     <td>${esc(b.name||b.class_name||'')}</td>
     <td>${esc(b.map||'')}</td>
     <td>${esc(b.owner_name||'')}<br><code>${esc(b.owner_id||'')}</code></td>
-    <td>${(b.last_seen||'').trim()?esc(b.last_seen):'<span class="muted">never</span>'}${b.transferred?' <span class="muted">xfer</span>':''}</td>
+    <td>${(b.last_seen||'').trim()?esc(fmtWhen(b.last_seen)):'<span class="muted">never</span>'}${b.transferred?' <span class="muted">xfer</span>':''}</td>
     <td>${b.orphan?'<span class="bad">'+esc(b.orphan_reason||'orphan')+'</span>':''}</td>
     <td><button class="act" data-qkind="${esc(b.kind||'')}" data-qid="${esc(b.id||'')}" data-qname="${esc(b.name||'')}" data-qmap="${esc(b.map||'')}">Queue</button></td>
   </tr>`).join('');
@@ -691,7 +712,7 @@ async function loadBases(){
      <tbody>${rows||'<tr><td colspan=8>none / table not present</td></tr>'}</tbody></table>`;
   const orows = (o.items||[]).map(x => `<tr>
     <td>${esc(x.owner_name||'')}<br><code>${esc(x.owner_id||'')}</code></td>
-    <td>${(x.last_seen||'').trim()?esc(x.last_seen):'<span class="muted">never</span>'}</td>
+    <td>${(x.last_seen||'').trim()?esc(fmtWhen(x.last_seen)):'<span class="muted">never</span>'}</td>
     <td>${esc(x.reason||'')}</td>
     <td>${x.bases||0}</td>
     <td>${x.vehicles||0}</td>
@@ -722,7 +743,7 @@ async function loadSocial(){
   const d = await api('/api/social');
   const listings = (d.listings||[]).map(x => `<tr>
     <td>${esc(x.exchange)}</td><td>${esc(x.item)}</td><td>${esc(x.price)}</td>
-    <td>${esc(x.seller_kind)}</td><td>${esc(x.seller)}</td><td>${esc(x.expires)}</td>
+    <td>${esc(x.seller_kind)}</td><td>${esc(x.seller)}</td><td>${esc(fmtWhen(x.expires)||x.expires||'')}</td>
   </tr>`).join('');
   const ex = (d.exchanges||[]).map(x => esc(x.name||x.id)).join(', ') || 'none';
   $('#choamlist').innerHTML = (d.error?`<p class="bad">${esc(d.error)}</p>`:'') +
@@ -744,7 +765,7 @@ async function loadSocial(){
      <table><thead><tr><th>Guild</th><th>Player</th><th>From</th></tr></thead>
      <tbody>${invites||'<tr><td colspan=3 class="muted">none</td></tr>'}</tbody></table>`;
   const terms = (d.landsraad_terms||[]).map((t,i) => `<tr>
-    <td>${i===0?'<b>current</b>':''} ${esc(t.id)}</td><td>${esc(t.start)}</td><td>${esc(t.end)}</td>
+    <td>${i===0?'<b>current</b>':''} ${esc(t.id)}</td><td>${esc(fmtWhen(t.start)||t.start||'')}</td><td>${esc(fmtWhen(t.end)||t.end||'')}</td>
     <td>${esc(t.reigning)}</td><td>${esc(t.active_decree)}</td><td>${esc(t.winning)}</td>
   </tr>`).join('');
   const decrees = (d.decrees||[]).map(x => `<tr><td>${esc(x.id)}</td><td>${esc(x.name)}</td><td>${esc(x.enabled)}</td></tr>`).join('');
