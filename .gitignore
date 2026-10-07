@@ -2,6 +2,7 @@ dune-install.config.ps1
 .fls-token
 install.env
 *.log
+repair-dune-health.lock
 lan-redirect/windivert/
 lan-redirect/WinDivert-*.zip
 lan-redirect/windivert-extract/

@@ -98,6 +98,7 @@ lf "$SETUP_SRC/dune-maintain.sh" /home/dune/.dune/bin/dune-maintain.sh
 lf "$SETUP_SRC/dune-fix-fls-dns.sh" /home/dune/.dune/bin/dune-fix-fls-dns.sh
 lf "$SETUP_SRC/dune-set-advertise-ip.sh" /home/dune/.dune/bin/dune-set-advertise-ip.sh
 lf "$SETUP_SRC/dune-ensure-runtime.sh" /home/dune/.dune/bin/dune-ensure-runtime.sh
+lf "$SETUP_SRC/dune-repair-health.sh" /home/dune/.dune/bin/dune-repair-health.sh
 lf "$SETUP_SRC/dune-admin.py" /home/dune/.dune/bin/dune-admin.py
 lf "$SETUP_SRC/dune-admin.sh" /home/dune/.dune/bin/dune-admin.sh
 lf "$SETUP_SRC/dune-admin-lib.py" /home/dune/.dune/bin/dune-admin-lib.py

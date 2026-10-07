@@ -113,6 +113,7 @@ os.chown(dst, uid, gid)
 os.chmod(dst, 0o755)
 names = [
     'dune-maintain.sh', 'dune-ensure-join.sh', 'dune-ensure-runtime.sh',
+    'dune-repair-health.sh',
     'dune-fix-fls-dns.sh', 'dune-set-advertise-ip.sh', 'apply-k8s-hosts.sh',
     'coredns-custom.yaml', 'dune-admin.py', 'dune-admin.sh',
     'dune-admin.service', 'dune-admin-lib.py', 'dune-admin.html',
