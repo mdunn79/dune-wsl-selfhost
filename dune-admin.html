@@ -499,7 +499,7 @@ function renderWorld(st){
   const n = st.net||{};
   const pods = (h.pods||[]).map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.ready)}</td><td>${esc(x.restarts)}</td><td>${esc(x.cpu)}</td><td>${esc(x.mem)}</td></tr>`).join('');
   const rem = (n.remotes||[]).map(x => `<tr><td>${esc(x.ip)}</td><td>${esc(x.kind)}</td><td>${x.count}</td></tr>`).join('');
-  const notes = (st.join_notes||[]).join(' · ') || (j ? 'Survival, Overmap, and join ports are up' : '');
+  const notes = (st.join_notes||[]).join(' · ') || (j ? 'Funcom Survival+Overmap Running/true and join ports are up' : '');
   const sch = st.schedule;
   $('#rsnow').textContent = sch && sch.at ? ('Scheduled at ' + fmtWhen(sch.at) + (sch.announced?' (countdown sent)':'') + (sch.deferred?' (deferred: players online)':'')) : 'No restart scheduled';
   const smeta = st.settings_meta || {};
