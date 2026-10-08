@@ -946,6 +946,17 @@ def social_intel() -> dict:
     }
 
 
+def _funcom_server(bg: dict, needle: str) -> dict | None:
+    for s in bg.get("servers") or []:
+        if needle in str(s.get("map") or "").lower():
+            return s
+    return None
+
+
+def _funcom_running_ready(s: dict | None) -> bool:
+    return bool(s) and bool(s.get("ready")) and str(s.get("phase") or "") == "Running"
+
+
 def enrich_status(payload: dict) -> dict:
     payload["steam"] = steam_ids(refresh=False)
     payload["health"] = host_health()
@@ -954,8 +965,43 @@ def enrich_status(payload: dict) -> dict:
     payload["welcome_on"] = bool((cfg().get("welcome") or {}).get("enabled"))
     payload["settings_meta"] = settings_meta()
     payload["presence"] = cfg().get("presence") or {}
-    payload["battlegroup"] = battlegroup_overview()
+    bg = battlegroup_overview()
+    payload["battlegroup"] = bg
     payload["overview"] = overview_map()
+    ports = payload.get("ports") or {}
+    surv = _funcom_server(bg, "survival")
+    over = _funcom_server(bg, "overmap")
+    notes = []
+    if payload.get("updating"):
+        notes.append("Steam/maintain is running (depot update)")
+    if not (bg.get("servers") or []):
+        notes.append("Funcom battlegroup has no game servers yet")
+    if not _funcom_running_ready(surv):
+        notes.append(
+            "Survival Funcom %s Ready=%s"
+            % ((surv or {}).get("phase") or "missing", (surv or {}).get("ready"))
+        )
+    if not _funcom_running_ready(over):
+        notes.append(
+            "Overmap Funcom %s Ready=%s"
+            % ((over or {}).get("phase") or "missing", (over or {}).get("ready"))
+        )
+    if bg.get("modifying"):
+        notes.append("Gateway / battlegroup Modifying")
+    if not ports.get("rmq_31982"):
+        notes.append("join TCP 31982 is down")
+    if not ports.get("director_31519"):
+        notes.append("director TCP 31519 is down")
+    payload["survival_ok"] = _funcom_running_ready(surv)
+    payload["overmap_ok"] = _funcom_running_ready(over)
+    payload["joinable"] = (
+        bool(payload["survival_ok"])
+        and bool(payload["overmap_ok"])
+        and not bool(bg.get("modifying"))
+        and bool(ports.get("rmq_31982"))
+        and bool(ports.get("director_31519"))
+    )
+    payload["join_notes"] = notes
     return payload
 
 
@@ -2001,11 +2047,18 @@ def read_delete_queue() -> dict:
 
 
 def public_from_world(st: dict) -> dict:
-    maps = [
-        {"kind": m.get("kind"), "ready": bool(m.get("ready")), "phase": m.get("phase")}
-        for m in (st.get("maps") or [])
-    ]
     bg = st.get("battlegroup") or {}
+    servers = bg.get("servers") or []
+    if servers:
+        maps = [
+            {"kind": s.get("map"), "ready": bool(s.get("ready")), "phase": s.get("phase")}
+            for s in servers
+        ]
+    else:
+        maps = [
+            {"kind": m.get("kind"), "ready": bool(m.get("ready")), "phase": m.get("phase")}
+            for m in (st.get("maps") or [])
+        ]
     return {
         "ok": True,
         "title": bg.get("title") or st.get("bg") or "",
@@ -2401,10 +2454,7 @@ def tick_extras() -> None:
         if _WAS_MODIFYING is False and modifying:
             webhook("map_down", "Gateway / battlegroup Modifying")
         if _WAS_JOINABLE and not joinable:
-            survival_ok = bool(st.get("survival_ok"))
-            overmap_ok = bool(st.get("overmap_ok"))
-            if survival_ok and overmap_ok:
-                webhook("map_down", "World not joinable: " + ", ".join(st.get("join_notes") or []))
+            webhook("map_down", "World not joinable: " + ", ".join(st.get("join_notes") or []))
     _WAS_JOINABLE = joinable
     _WAS_MODIFYING = modifying
     players, _e = M.load_players()

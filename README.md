@@ -180,7 +180,7 @@ It always **looks**: Steam public buildid for app `4754530`, map Ready, join TCP
 - Steam depot download + map roll only if the public buildid differs from the installed appmanifest, or there is no local manifest.
 - `battlegroup start` only if Survival/Overmap are not Running 1/1.
 - Advertise/listing patch (and a map roll) only if the public IPv4 actually changed.
-- Join/director bind only if those ports are missing.
+- Join/director bind only if those ports are missing. FLS DNS does **not** stop Survival/Overmap on a no-op hour (that rewrite runs only after a depot apply, map start, or advertise change).
 - Helper files are recopied only when they differ; the LAN admin is restarted only when those files changed (or the service was down).
 - `wsl --shutdown` only if `.wslconfig` needed `autoMemoryReclaim=disabled`, or `wsl.exe` is wedged.
 

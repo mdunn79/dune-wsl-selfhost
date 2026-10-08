@@ -60,7 +60,7 @@ On the WSL host, bans, whitelist, notes, and panel config live under `/home/dune
 
 ## If the UI looks wrong
 
-- **“Not joinable”** with maps actually Running: hard-refresh the browser. The panel’s joinable flag is Survival + Overmap `1/1 Running` plus TCP `31982` and `31519`. It is not a Steam update by itself; World shows whether maintain is running.
+- **“Not joinable”** with pods `1/1 Running`: kubectl is not the join check. Joinable is Funcom Survival_1 + Overmap **Running / true**, Gateway not Modifying, plus TCP `31982` / `31519`. `Startup` / `PostLandscapePhysics` is offline for clients even when pods look Ready. World shows whether maintain is running. `Get-DuneStatus.ps1` is the same Funcom table.
 - **Logs say “no pod”:** the battlegroup namespace was not listed, or that workload is not up. `Get-DuneStatus.ps1` is the source of truth for map Ready.
 - **Offline people missing:** the roster is `dune.player_state` joined to `dune.accounts` (FLS hex ids). Online is `online_status` plus Funcom `serverstats` when present. LAN-redirect does not hide you; it only rewrites the join IP. The world-owner account on this host often has the world HostId in `accounts.user`; the panel lists that character by Funcom id (`name#digits`) instead, and Tools accepts that id. Clear the Players filter if it still has the HostId.
 - **Join path empty while you are in-game:** Unreal only writes `RemoteAddr` on connect/errors. A stable session often has none. Players → online is the live roster. Rubberband `TimeStamp expired` is still a 15-minute count from those logs.

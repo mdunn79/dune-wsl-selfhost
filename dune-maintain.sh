@@ -280,8 +280,8 @@ if [ "$rolled" -eq 1 ]; then
     "$JOIN"
   fi
 else
-  echo "=== Maps already Ready on current depot; bind join ports only if missing ==="
-  "$JOIN"
+  echo "=== Maps already Ready on current depot; bind join ports only if missing (no FLS container restart) ==="
+  SKIP_FLS_DNS=1 "$JOIN"
 fi
 
 echo "=== dune-maintain end ==="
