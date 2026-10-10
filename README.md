@@ -17,10 +17,9 @@ The scripts in this folder are MIT. The game files SteamCMD downloads are Funcom
 - **~80 GB free disk** (Ubuntu + k3s + Funcom’s Linux depot).
 - Internet on the host for Ubuntu, SteamCMD, and cert-manager.
 - A **second computer** to play from (LAN or internet). Joining from the host is unreliable.
-- A Funcom **self-host token** from [account.duneawakening.com](https://account.duneawakening.com/) (Self-Host / experimental section for your account).
-- The **Dune: Awakening Experimental** client on every machine that will play (Steam; not the live/main branch). Client build must match the Linux depot this installer downloads.
+- A Funcom **self-host token** from [account.duneawakening.com](https://account.duneawakening.com/).
 
-You do **not** need: WSL preinstalled, Ubuntu preinstalled, Windows 11 Pro, Hyper-V Manager, Funcom’s Windows SteamCMD installer, or a Steam account for the dedicated server (SteamCMD uses anonymous login).
+You do **not** need: WSL preinstalled, Ubuntu preinstalled, Windows 11 Pro, Hyper-V Manager, Funcom’s Windows SteamCMD installer, a special or PTC game client, or a Steam account for the dedicated server (SteamCMD uses anonymous login).
 
 First install often takes **45–120 minutes** (Steam depot + first map boot). Windows itself may require **one reboot** the first time WSL features are enabled. After reboot, run the same installer command again; it continues from there.
 
@@ -136,10 +135,10 @@ House PCs plus internet friends: keep `AdvertiseIp` public, then install `lan-re
 
 ## 7. Join from another computer
 
-1. On a **different** computer (LAN or internet), launch Dune: Awakening **Experimental**.
-2. Open the self-host / Experimental server list.
+1. On a **different** computer (LAN or internet), launch Dune: Awakening (normal Steam install).
+2. In the server browser, open the **Experimental** tab (player-run / self-hosted worlds).
 3. Find the name you set as `WorldName`.
-4. Connect. Client and server must be on the same game version.
+4. Connect.
 
 **Do not join from the host.** Mirrored WSL networking does not hairpin reliably; the list can spin forever if you try.
 
@@ -151,9 +150,7 @@ If the tab spins after you click the world, Hagga is usually still starting. On 
 
 ## 8. House PCs when the listing is public
 
-Funcom’s Experimental list has **one** IPv4. There is no “connect by IP” box. If that IPv4 is your WAN address, a PC in the same house still sends UDP/TCP to the public IP and the router has to hairpin it back to `LanIp`. Hagga then logs the client as your WAN address. Unreal rejects late `ServerMove` packets (about a second old), which feels like rubberbanding. The world can be healthy, CPU idle, and internet players fine.
-
-ARK / Valheim / 7DTD often survive that hairpin on the same router because they listen more loosely. This stack is Unreal inside WSL2, and Funcom will not take a LAN address *and* a public one.
+The Experimental tab lists **one** IPv4 per world. There is no “connect by IP” box. If that IPv4 is your WAN address, a PC in the same house still sends UDP/TCP to the public IP and the router has to hairpin it back to `LanIp`. Hagga then logs the client as your WAN address. Unreal rejects late `ServerMove` packets (about a second old), which feels like rubberbanding. The world can be healthy, CPU idle, and internet players fine. Funcom will not take a LAN address *and* a public one.
 
 **Fix (gaming PC only, not the host):** copy the `lan-redirect` folder. The host installer writes `lan-redirect\dune-client.config.ps1` with `LanIp` for you. On the house PC:
 
@@ -178,7 +175,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Restart-DuneBattlegro
 It always **looks**: Steam public buildid for app `4754530`, map Ready, join TCP `31982` / `31519`, advertise IPv4. It only **acts** when something is wrong or newer:
 
 - Steam depot download + map roll only if the public buildid differs from the installed appmanifest, or there is no local manifest.
-- `battlegroup start` only if Survival/Overmap are not Running 1/1.
+- `battlegroup start` only if Survival/Overmap pods are not Running 1/1. Joinable is Funcom Running / true, not kubectl 1/1.
 - Advertise/listing patch (and a map roll) only if the public IPv4 actually changed.
 - Join/director bind only if those ports are missing. FLS DNS does **not** stop Survival/Overmap on a no-op hour (that rewrite runs only after a depot apply, map start, or advertise change).
 - Helper files are recopied only when they differ; the LAN admin is restarted only when those files changed (or the service was down).
@@ -194,11 +191,11 @@ It also restores flannel/`spec.stop` if a Windows reboot left the world Stopped.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-DuneScheduledMaintain.ps1"
 ```
 
-That registers **DuneBattlegroupMaintain**: Daily **6:00 AM** local, repeat **every hour**, plus **At log on** for the Windows user who ran it. **Start in** is this folder. If a run is already going, the next tick is skipped (a depot apply can take ~45 minutes). After a host reboot, At log on brings k3s, Hagga, and join ports back without downloading the depot again. Hourly Steam checks catch an Experimental patch soon after Funcom ships it, so players are not stuck on an old build until the next morning.
+That registers **DuneBattlegroupMaintain**: Daily **6:00 AM** local, repeat **every hour**, plus **At log on** for the Windows user who ran it. **Start in** is this folder. If a run is already going, the next tick is skipped (a depot apply can take ~45 minutes). After a host reboot, At log on brings k3s, Hagga, and join ports back without downloading the depot again. Hourly Steam checks pick up a Funcom depot soon after it ships.
 
 Uninstall: `.\Install-DuneScheduledMaintain.ps1 -Uninstall`. If a hand-made task already runs `Restart-DuneBattlegroup.ps1` (any name, any folder), this installer removes it and registers **DuneBattlegroupMaintain** pointed at this folder, so hourly does not copy a stale sibling tree over live admin.
 
-**Join/admin health (every 5 minutes):** a separate task rebinds LAN TCP `31982` / `31519` / `18888` if a `kubectl port-forward` died, and starts `dune-admin.service` if it is down. If Survival and Overmap **pods are missing** (or k3s has no world namespace), it runs `dune-ensure-runtime.sh` (flannel / `spec.stop` / start). It does **not** query Steam, apply a depot, refresh advertise IP, or rewrite FLS DNS. Pods present but not Ready is a log line only. If home WAN is down (no TCP 443 to `1.1.1.1` / `8.8.8.8`), it still does local binds and runtime restore, and it will not touch Funcom listing/FLS. It skips the tick while hourly maintain is running. Log: `repair-dune-health.log`.
+**Join/admin health (every 5 minutes):** a separate task rebinds LAN TCP `31982` / `31519` if a `kubectl port-forward` died, and starts `dune-admin.service` if it is down. File Browser `18888` is a warning only if it is missing. If Survival and Overmap **pods are missing** (or k3s has no world namespace), it runs `dune-ensure-runtime.sh` (flannel / `spec.stop` / start). It does **not** query Steam, apply a depot, refresh advertise IP, or rewrite FLS DNS. Pods present but not Ready is a log line only. If home WAN is down (no TCP 443 to `1.1.1.1` / `8.8.8.8`), it still does local binds and runtime restore, and it will not touch Funcom listing/FLS. It skips the tick while hourly maintain is running. Log: `repair-dune-health.log`.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-DuneScheduledHealth.ps1"
@@ -251,7 +248,7 @@ Funcom’s file browser (TCP `18888`) often **denies writes** to those inis. The
 - **LanIp is not assigned to the host.** Leave `LanIp` empty, or put the IPv4 from `ipconfig` for Ethernet or Wi-Fi.
 - **In queue / server offline after an update.** A depot roll restarts Hagga. The client can list the world while Survival is still `Startup` / `PostLandscapePhysics`, or while director `31519` is not listening. Run `Get-DuneStatus.ps1`. Join only when Overmap and Survival_1 are Running / true and Gateway is Ready (not Modifying). `Restart-DuneBattlegroup.ps1` now waits for that and retries the director bind.
 - **HP3 / pending connection / could not verify identity.** The Hagga process could not reach Funcom FLS DNS (`sb-retail.fls.funcom.com`). The installer applies a CoreDNS stub and sets game-pod DNS to `8.8.8.8` with `ndots:1`. Re-run `Install.bat` or `Restart-DuneBattlegroup.ps1`. Join only when Survival is Running / true.
-- **Client cannot see the world.** Experimental client (not live), same build as the server, firewall, another computer (not the host). For internet: `AdvertiseIp` must be `"auto"` or the current public IPv4, and the router must forward to `LanIp`. For LAN-only: leave `AdvertiseIp` empty.
+- **Client cannot see the world.** Other computer (not the host), **Experimental** tab in the server browser, firewall. For internet: `AdvertiseIp` must be `"auto"` or the current public IPv4, and the router must forward to `LanIp`. For LAN-only: leave `AdvertiseIp` empty.
 - **Connection timed out (world is listed).** Funcom’s directory is not the UDP path. The installer must set Unreal `-ExternalAddress` to the public IPv4 while `-MultiHome` stays `LanIp`. `Get-DuneStatus.ps1` shows both. Also forward UDP `7777–7810` **and** TCP `31982` to `LanIp`; this WSL stack also needs TCP `31519` and UDP `7888–7941`. Do not put the WAN IP on k3s as `node-external-ip`.
 - **Rubberbanding on a house PC while internet friends are fine.** The listing is the WAN IP, so the LAN client hairpins through the router. `Get-DuneNetHealth.ps1` shows RemoteAddr equal to your public IPv4 and `TimeStamp expired` while you move. Install `lan-redirect` on that gaming PC ([House PCs](#house-pcs-when-the-listing-is-public)). This is not the same as joining from the host.
 - **Rubberbanding / hitching for everyone (including internet players).** Windows WSL default `autoMemoryReclaim` (gradual/dropCache) can reclaim Hagga’s pages while the process is running. The installer and `Restart-DuneBattlegroup.ps1` set `autoMemoryReclaim=disabled` in `%USERPROFILE%\.wslconfig`. That key is VM-wide: it applies on the next `wsl --shutdown` (or the first start after the file is written). Re-runs do not shut WSL down when the key is already `disabled`. Do not set `pageReporting` — current WSL rejects it. `Get-DuneStatus.ps1` warns if reclaim is not disabled.

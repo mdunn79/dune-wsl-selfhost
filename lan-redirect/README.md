@@ -2,7 +2,7 @@
 
 Funcom's listing only has the public IPv4. This PC intercepts those Dune ports and rewrites them to the host LAN IP. Hagga then sees `192.168.x` instead of the WAN address.
 
-Run this on the **gaming PC**, not on the host. Start the redirector (or wait until `-WatchDune` arms), then join from the Experimental list. If you were already in the world, leave to the list and join again.
+Run this on the **gaming PC**, not on the host. Start the redirector (or wait until `-WatchDune` arms), then join from the **Experimental** tab in the server browser (player-run worlds). If you were already in the world, leave to the list and join again.
 
 ## Run by hand (no background install)
 
