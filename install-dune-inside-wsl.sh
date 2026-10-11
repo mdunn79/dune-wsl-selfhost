@@ -109,6 +109,19 @@ if [ -f "$SETUP_SRC/dune-admin.html" ]; then
   sed 's/\r$//' "$SETUP_SRC/dune-admin.html" > /home/dune/.dune/bin/dune-admin.html
   chmod 644 /home/dune/.dune/bin/dune-admin.html
 fi
+install -d -o dune -g dune -m 755 /home/dune/.dune/bin/admin-maps
+if [ -d "$SETUP_SRC/admin-maps" ]; then
+  for f in "$SETUP_SRC"/admin-maps/*; do
+    [ -f "$f" ] || continue
+    case "$f" in
+      *.jpg|*.jpeg|*.png|*.webp|*.JPG|*.JPEG|*.PNG|*.WEBP)
+        cp -f "$f" /home/dune/.dune/bin/admin-maps/
+        ;;
+    esac
+  done
+  chmod 644 /home/dune/.dune/bin/admin-maps/* 2>/dev/null || true
+  chown dune:dune /home/dune/.dune/bin/admin-maps /home/dune/.dune/bin/admin-maps/* 2>/dev/null || true
+fi
 if [ -f "$SETUP_SRC/dune-admin.service" ]; then
   sed 's/\r$//' "$SETUP_SRC/dune-admin.service" > /home/dune/.dune/bin/dune-admin.service
 fi

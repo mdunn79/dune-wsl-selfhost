@@ -35,11 +35,39 @@ _WIKI_LOCK = threading.Lock()
 _WIKI_FETCHING = False
 _CATALOG_MEM = {"t": 0.0, "v": None}
 _MAP_BOUNDS: dict = {}
+_MAP_DIR = Path(__file__).resolve().with_name("admin-maps")
+# Hagga: published ~8073m x 8140m, Unreal cm, origin on-map (live markers both signs).
+# Deep Desert: 9x9 / 576 km2 ~24 km, origin assumed center like Hagga.
+# Cities: live dune.markers AABB, padded and expanded to the screenshot aspect.
 MAP_FRAMES = {
-    "HaggaBasin": {"title": "Hagga Basin", "maps": ("HaggaBasin",)},
-    "Arrakeen": {"title": "Arrakeen", "maps": ("Arrakeen",)},
-    "HarkoVillage": {"title": "Harko Village", "maps": ("HarkoVillage",)},
-    "DeepDesert": {"title": "Deep Desert", "maps": ("DeepDesert", "DeepDesert_1")},
+    "HaggaBasin": {
+        "title": "Hagga Basin",
+        "maps": ("HaggaBasin",),
+        "image": "HaggaBasin.jpg",
+        "aspect": 1.0,
+        "bounds": {"min_x": -403650.0, "max_x": 403650.0, "min_y": -407000.0, "max_y": 407000.0},
+    },
+    "Arrakeen": {
+        "title": "Arrakeen",
+        "maps": ("Arrakeen",),
+        "image": "Arrakeen.jpg",
+        "aspect": 1024 / 547,
+        "bounds": {"min_x": -30439.0, "max_x": 17486.0, "min_y": -13235.0, "max_y": 12378.0},
+    },
+    "HarkoVillage": {
+        "title": "Harko Village",
+        "maps": ("HarkoVillage",),
+        "image": "HarkoVillage.jpg",
+        "aspect": 1024 / 632,
+        "bounds": {"min_x": -26590.0, "max_x": 35281.0, "min_y": -6112.0, "max_y": 32083.0},
+    },
+    "DeepDesert": {
+        "title": "Deep Desert",
+        "maps": ("DeepDesert", "DeepDesert_1"),
+        "image": "DeepDesert.png",
+        "aspect": 1.0,
+        "bounds": {"min_x": -1200000.0, "max_x": 1200000.0, "min_y": -1200000.0, "max_y": 1200000.0},
+    },
 }
 
 GM_GATES = {
@@ -800,6 +828,13 @@ def _map_in_sql(maps: tuple) -> str:
     return ",".join(ok) if ok else "'HaggaBasin'"
 
 
+def _map_image_url(spec: dict) -> str:
+    name = spec.get("image") or ""
+    if not name or "/" in name or "\\" in name:
+        return ""
+    return "/maps/" + name if (_MAP_DIR / name).is_file() else ""
+
+
 def _map_bounds(maps: tuple) -> dict | None:
     key = ",".join(maps)
     now = time.time()
@@ -912,13 +947,16 @@ def hagga_map(which: str = "HaggaBasin") -> dict:
         owner = (r[3] if len(r) > 3 else "") or (r[4] if len(r) > 4 else "")
         _attach_owner(rec, idx, owner)
         vehicles.append(rec)
-    bounds = _map_bounds(maps)
+    image = _map_image_url(spec)
+    bounds = spec.get("bounds") or _map_bounds(maps)
     key = which if which in MAP_FRAMES else "HaggaBasin"
     return {
         "ok": True,
         "map": key,
         "title": spec["title"],
         "bounds": bounds,
+        "image": image,
+        "aspect": float(spec.get("aspect") or 1.0) if image else 1.0,
         "south": "high-y",
         "players": players,
         "claims": claims,

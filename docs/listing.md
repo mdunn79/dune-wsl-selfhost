@@ -15,4 +15,4 @@ If the world vanished from Experimental while other player-run worlds still show
 2. Apply UserSettings if you changed the overlay, then restart maps.
 3. Watch Gateway: zero recent restarts, no display-name 400s. Admin joinable can still be green while FLS has you unlisted.
 
-House PCs on a **public** IPv4 listing still need `lan-redirect`. That is rubberband, not listing.
+House PCs on a **public** IPv4 listing still need `lan-redirect`. That is rubberband, not listing: [house-pc.md](house-pc.md).

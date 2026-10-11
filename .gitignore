@@ -2,6 +2,12 @@ dune-install.config.ps1
 .fls-token
 install.env
 *.log
+admin-maps/*.jpg
+admin-maps/*.jpeg
+admin-maps/*.png
+admin-maps/*.webp
+_tmp_*.py
+_tmp_*.sh
 repair-dune-health.lock
 lan-redirect/windivert/
 lan-redirect/WinDivert-*.zip

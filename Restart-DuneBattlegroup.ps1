@@ -135,6 +135,26 @@ for n in names:
     os.chown(target, uid, gid)
     changed = 1
     print('updated', n)
+maps_src = src / 'admin-maps'
+maps_dst = dst / 'admin-maps'
+if maps_src.is_dir():
+    maps_dst.mkdir(parents=True, exist_ok=True)
+    os.chown(maps_dst, uid, gid)
+    os.chmod(maps_dst, 0o755)
+    for p in maps_src.iterdir():
+        if p.suffix.lower() not in ('.jpg', '.jpeg', '.png', '.webp'):
+            continue
+        data = p.read_bytes()
+        target = maps_dst / p.name
+        old = target.read_bytes() if target.is_file() else None
+        if old == data:
+            print('unchanged', 'admin-maps/' + p.name)
+            continue
+        target.write_bytes(data)
+        os.chmod(target, 0o644)
+        os.chown(target, uid, gid)
+        changed = 1
+        print('updated', 'admin-maps/' + p.name)
 print('HELPERS_CHANGED' if changed else 'HELPERS_UNCHANGED')
 "@
     $tmp = Join-Path $env:TEMP "dune-sync-helpers.py"

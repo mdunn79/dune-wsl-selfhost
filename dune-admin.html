@@ -38,7 +38,8 @@ a{color:var(--acc)}
 .notice{background:#2a261f;border:1px solid var(--acc);padding:8px 10px;border-radius:6px;margin:0 0 10px}
 .ini-drift input{border-color:var(--acc)}
 .ovsvg{background:#0e0d0b;border:1px solid #2a261f;border-radius:6px;display:block;width:100%;max-width:440px;height:260px}
-.mapsvg{background:#0e0d0b;border:1px solid #2a261f;border-radius:6px;display:block;width:100%;max-width:720px;aspect-ratio:1;height:auto}
+.mapsvg{background:#0e0d0b;border:1px solid #2a261f;border-radius:6px;display:block;width:100%;max-width:720px;height:auto}
+.mapsvg image{pointer-events:none}
 .mapdot{cursor:pointer}
 #mapwhich button.on{background:var(--acc);color:#1c160a}
 </style>
@@ -118,7 +119,7 @@ a{color:var(--acc)}
       <button type="button" class="act" data-map="DeepDesert">Deep Desert</button>
     </div>
     <h3 id="maptitle" style="margin:8px 0">Hagga Basin</h3>
-    <p class="muted">Labeled frame, not Funcom art. Each tab is its own XY space. South at the bottom (high Unreal Y). Click a pin to fill Character/Tools id.</p>
+    <p class="muted">In-game map when a screenshot is in admin-maps/. Each tab is its own XY space. South at the bottom (high Unreal Y). Click a pin to fill Character/Tools id.</p>
     <div class="row">
       <label><input type="checkbox" id="mapOn" checked/> Online</label>
       <label><input type="checkbox" id="mapOff" checked/> Offline pawns</label>
@@ -516,8 +517,12 @@ function haggaLayers(){
     veh: !($('#mapVeh') && !$('#mapVeh').checked)
   };
 }
-function haggaXY(b, x, y){
-  const W=800, H=800;
+function haggaSize(d){
+  const aspect = Math.max(Number(d && d.aspect) || 1, 0.4);
+  const W = 800;
+  return [W, Math.max(Math.round(W / aspect), 200)];
+}
+function haggaXY(b, x, y, W, H){
   const dx=Math.max(Number(b.max_x)-Number(b.min_x), 1);
   const dy=Math.max(Number(b.max_y)-Number(b.min_y), 1);
   return [((Number(x)-Number(b.min_x))/dx)*W, ((Number(y)-Number(b.min_y))/dy)*H];
@@ -557,32 +562,47 @@ function drawHagga(d){
     frame.innerHTML = `<p class="muted">${esc(counts)}</p><p class="muted">No actors with transforms on this map yet.${extra}</p>`;
     return;
   }
+  const [W,H] = haggaSize(d);
   let marks = '';
   for (const c of claims){
-    const [cx,cy] = haggaXY(b, c.x, c.y);
+    const [cx,cy] = haggaXY(b, c.x, c.y, W, H);
     const who = c.owner_name || c.name || 'claim';
-    marks += `<rect class="mapdot" x="${(cx-4.5).toFixed(1)}" y="${(cy-4.5).toFixed(1)}" width="9" height="9" fill="#c4a35a" data-pid="${esc(c.owner_id||'')}"><title>${esc(who)}</title></rect>`;
+    marks += `<rect class="mapdot" x="${(cx-4.5).toFixed(1)}" y="${(cy-4.5).toFixed(1)}" width="9" height="9" fill="#c4a35a" stroke="#1c160a" stroke-width="1" data-pid="${esc(c.owner_id||'')}"><title>${esc(who)}</title></rect>`;
   }
   for (const v of vehs){
-    const [cx,cy] = haggaXY(b, v.x, v.y);
+    const [cx,cy] = haggaXY(b, v.x, v.y, W, H);
     const who = (v.owner_name ? v.owner_name+' · ' : '') + (v.name||'vehicle');
-    marks += `<polygon class="mapdot" points="${cx.toFixed(1)},${(cy-6).toFixed(1)} ${(cx+5.5).toFixed(1)},${cy.toFixed(1)} ${cx.toFixed(1)},${(cy+6).toFixed(1)} ${(cx-5.5).toFixed(1)},${cy.toFixed(1)}" fill="#6a8aaa" data-pid="${esc(v.owner_id||'')}"><title>${esc(who)}</title></polygon>`;
+    marks += `<polygon class="mapdot" points="${cx.toFixed(1)},${(cy-6).toFixed(1)} ${(cx+5.5).toFixed(1)},${cy.toFixed(1)} ${cx.toFixed(1)},${(cy+6).toFixed(1)} ${(cx-5.5).toFixed(1)},${cy.toFixed(1)}" fill="#6a8aaa" stroke="#1c160a" stroke-width="1" data-pid="${esc(v.owner_id||'')}"><title>${esc(who)}</title></polygon>`;
   }
   for (const p of players){
-    const [cx,cy] = haggaXY(b, p.x, p.y);
+    const [cx,cy] = haggaXY(b, p.x, p.y, W, H);
     const fill = p.online ? '#7aa36a' : '#9a907e';
-    marks += `<circle class="mapdot" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5.5" fill="${fill}" data-pid="${esc(p.player_id||'')}"><title>${esc(p.name||p.player_id)}</title></circle>
-      <text x="${(cx+8).toFixed(1)}" y="${(cy+4).toFixed(1)}" fill="#e8e0d0" font-size="12">${esc(p.name||'')}</text>`;
+    marks += `<circle class="mapdot" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5.5" fill="${fill}" stroke="#1c160a" stroke-width="1" data-pid="${esc(p.player_id||'')}"><title>${esc(p.name||p.player_id)}</title></circle>
+      <text x="${(cx+8).toFixed(1)}" y="${(cy+4).toFixed(1)}" fill="#e8e0d0" stroke="#1c160a" stroke-width="3" paint-order="stroke" font-size="12">${esc(p.name||'')}</text>`;
   }
-  frame.innerHTML = `<p class="muted">${esc(counts)}</p>
-    <svg class="mapsvg" viewBox="0 0 800 800" preserveAspectRatio="xMidYMid meet">
-      <rect x="36" y="36" width="728" height="728" rx="18" fill="none" stroke="#3a342a"/>
-      ${mapDecor(d.map)}
-      ${marks}
-    </svg>`;
+  const href = d._href || '';
+  const bg = href
+    ? `<image href="${esc(href)}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/>`
+    : `<rect x="36" y="36" width="${W-72}" height="${H-72}" rx="18" fill="none" stroke="#3a342a"/>${mapDecor(d.map)}`;
+  const empty = (!players.length && !claims.length && !vehs.length)
+    ? `<p class="muted">${(d.map === 'DeepDesert') ? 'No actors on Deep Desert yet.' : 'No actors with transforms on this map yet.'}</p>`
+    : '';
+  frame.innerHTML = `<p class="muted">${esc(counts)}</p>${empty}
+    <svg class="mapsvg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">${bg}${marks}</svg>`;
+}
+const MAP_IMG = {};
+async function mapHref(path){
+  if (!path) return '';
+  if (MAP_IMG[path]) return MAP_IMG[path];
+  const r = await fetch(path, {headers:{'X-Admin-Token': token()}});
+  if (!r.ok) return '';
+  const url = URL.createObjectURL(await r.blob());
+  MAP_IMG[path] = url;
+  return url;
 }
 async function loadHagga(){
   HAGGA = await api('/api/hagga-map?map=' + encodeURIComponent(MAP_WHICH));
+  if (HAGGA && HAGGA.image) HAGGA._href = await mapHref(HAGGA.image);
   drawHagga(HAGGA);
 }
 function svgMap(title, dots){
