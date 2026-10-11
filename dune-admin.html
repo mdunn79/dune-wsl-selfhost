@@ -38,6 +38,9 @@ a{color:var(--acc)}
 .notice{background:#2a261f;border:1px solid var(--acc);padding:8px 10px;border-radius:6px;margin:0 0 10px}
 .ini-drift input{border-color:var(--acc)}
 .ovsvg{background:#0e0d0b;border:1px solid #2a261f;border-radius:6px;display:block;width:100%;max-width:440px;height:260px}
+.mapsvg{background:#0e0d0b;border:1px solid #2a261f;border-radius:6px;display:block;width:100%;max-width:720px;aspect-ratio:1;height:auto}
+.mapdot{cursor:pointer}
+#mapwhich button.on{background:var(--acc);color:#1c160a}
 </style>
 </head>
 <body>
@@ -56,6 +59,7 @@ a{color:var(--acc)}
   <label id="drylab" class="muted" title="When checked, GM tools, broadcast, restart, apply, and advertise return a preview and are not sent to the world."><input type="checkbox" id="dryrun" checked/> Dry-run (nothing sent to the world)</label>
   <nav>
     <button data-tab="world" class="on">World</button>
+    <button data-tab="map">Map</button>
     <button data-tab="players">Players</button>
     <button data-tab="char">Character</button>
     <button data-tab="tools">Tools</button>
@@ -83,7 +87,7 @@ a{color:var(--acc)}
       <button class="act" data-op="check-update">Check Steam update</button>
       <button class="act bad" data-op="apply-update" data-confirm="Run maintain? Maps roll only if a newer depot is waiting.">Apply depot if newer</button>
     </div>
-    <p class="muted">Repair skips FLS DNS rewrite (will not bounce Hagga). Apply depot uses the same job as the daily scheduled task.</p>
+    <p class="muted">Repair skips the FLS DNS container restart (will not bounce Hagga). DNS for new Unreal pods is the FLS watcher. Apply depot uses the same job as the daily scheduled task.</p>
   </div>
   <div class="card">
     <h3 style="margin:0 0 8px">Scheduled restart</h3>
@@ -103,6 +107,25 @@ a{color:var(--acc)}
       <button class="act bad" id="rsdo">Import selected</button>
     </div>
     <div id="bups"></div>
+  </div>
+</section>
+<section id="map" class="tab" hidden>
+  <div class="card">
+    <div class="row" id="mapwhich">
+      <button type="button" class="act" data-map="HaggaBasin">Hagga</button>
+      <button type="button" class="act" data-map="Arrakeen">Arrakeen</button>
+      <button type="button" class="act" data-map="HarkoVillage">Harko</button>
+      <button type="button" class="act" data-map="DeepDesert">Deep Desert</button>
+    </div>
+    <h3 id="maptitle" style="margin:8px 0">Hagga Basin</h3>
+    <p class="muted">Labeled frame, not Funcom art. Each tab is its own XY space. South at the bottom (high Unreal Y). Click a pin to fill Character/Tools id.</p>
+    <div class="row">
+      <label><input type="checkbox" id="mapOn" checked/> Online</label>
+      <label><input type="checkbox" id="mapOff" checked/> Offline pawns</label>
+      <label><input type="checkbox" id="mapClaim" checked/> Claims</label>
+      <label><input type="checkbox" id="mapVeh" checked/> Vehicles</label>
+    </div>
+    <div id="haggaframe">Open this tab to load.</div>
   </div>
 </section>
 <section id="players" class="tab" hidden>
@@ -315,17 +338,38 @@ a{color:var(--acc)}
 const $ = s => document.querySelector(s);
 let CATALOG = {items:[], skills:[]};
 let SEL_BACKUP = "";
+let HAGGA = null;
+let MAP_WHICH = 'HaggaBasin';
 function show(id){
   document.querySelectorAll('.tab').forEach(e => e.hidden = e.id !== id);
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab===id));
   if (id==='audit') loadAudit();
   if (id==='settings') loadSettings();
   if (id==='world') loadBackups();
+  if (id==='map') loadHagga();
   if (id==='bases') { loadBases(); loadDeleteQueue(); }
   if (id==='vehicles') loadVehicles();
   if (id==='social') loadSocial();
 }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => show(b.dataset.tab));
+['mapOn','mapOff','mapClaim','mapVeh'].forEach(id => {
+  const el = $('#'+id);
+  if (el) el.onchange = () => { if (HAGGA) drawHagga(HAGGA); };
+});
+if ($('#mapwhich')) $('#mapwhich').onclick = (e) => {
+  const b = e.target.closest('button[data-map]');
+  if (!b) return;
+  MAP_WHICH = b.getAttribute('data-map') || 'HaggaBasin';
+  loadHagga();
+};
+if ($('#haggaframe')) $('#haggaframe').onclick = (e) => {
+  const t = e.target.closest('[data-pid]');
+  if (!t) return;
+  const pid = t.getAttribute('data-pid') || '';
+  if (!pid) return;
+  if ($('#cid')) $('#cid').value = pid;
+  if ($('#tid')) $('#tid').value = pid;
+};
 function token(){ return sessionStorage.getItem('dune_admin_tok') || ''; }
 function esc(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 async function api(path, body){
@@ -459,9 +503,87 @@ async function boot(){
 async function refresh(){
   renderWorld(await api('/api/status'));
   if (!$('#players').hidden) renderPlayers();
+  if ($('#map') && !$('#map').hidden) loadHagga();
   if ($('#bases') && !$('#bases').hidden) loadBases();
   if ($('#vehicles') && !$('#vehicles').hidden) loadVehicles();
   if ($('#social') && !$('#social').hidden) loadSocial();
+}
+function haggaLayers(){
+  return {
+    on: !($('#mapOn') && !$('#mapOn').checked),
+    off: !($('#mapOff') && !$('#mapOff').checked),
+    claim: !($('#mapClaim') && !$('#mapClaim').checked),
+    veh: !($('#mapVeh') && !$('#mapVeh').checked)
+  };
+}
+function haggaXY(b, x, y){
+  const W=800, H=800;
+  const dx=Math.max(Number(b.max_x)-Number(b.min_x), 1);
+  const dy=Math.max(Number(b.max_y)-Number(b.min_y), 1);
+  return [((Number(x)-Number(b.min_x))/dx)*W, ((Number(y)-Number(b.min_y))/dy)*H];
+}
+function mapDecor(map){
+  if (map === 'HaggaBasin') return `
+      <line x1="90" y1="520" x2="710" y2="520" stroke="#2a261f" stroke-dasharray="8 10"/>
+      <text x="400" y="58" text-anchor="middle" fill="#9a907e" font-size="13">N · Shield Wall</text>
+      <text x="400" y="748" text-anchor="middle" fill="#9a907e" font-size="13">Hagga Basin South</text>
+      <text x="58" y="400" text-anchor="middle" fill="#9a907e" font-size="12" transform="rotate(-90 58 400)">W · O'odham</text>
+      <text x="742" y="400" text-anchor="middle" fill="#9a907e" font-size="12" transform="rotate(90 742 400)">E · Jabal</text>
+      <text x="400" y="508" text-anchor="middle" fill="#5c5648" font-size="11">Vermillius Gap</text>`;
+  return `
+      <text x="400" y="58" text-anchor="middle" fill="#9a907e" font-size="13">N</text>
+      <text x="400" y="748" text-anchor="middle" fill="#9a907e" font-size="13">S</text>
+      <text x="58" y="400" text-anchor="middle" fill="#9a907e" font-size="12" transform="rotate(-90 58 400)">W</text>
+      <text x="742" y="400" text-anchor="middle" fill="#9a907e" font-size="12" transform="rotate(90 742 400)">E</text>`;
+}
+function drawHagga(d){
+  const frame = $('#haggaframe');
+  if (!frame) return;
+  if ($('#maptitle')) $('#maptitle').textContent = (d && d.title) || MAP_WHICH;
+  document.querySelectorAll('#mapwhich button').forEach(b => b.classList.toggle('on', b.dataset.map===MAP_WHICH));
+  if (!d || d.ok === false){
+    frame.innerHTML = `<p class="bad">${esc((d&&d.error)||'map failed')}</p>`;
+    return;
+  }
+  const b = d.bounds;
+  const L = haggaLayers();
+  const players = (d.players||[]).filter(p => p.online ? L.on : L.off);
+  const claims = L.claim ? (d.claims||[]) : [];
+  const vehs = L.veh ? (d.vehicles||[]) : [];
+  const nOn = (d.players||[]).filter(p=>p.online).length;
+  const counts = `${nOn} online · ${(d.players||[]).length - nOn} offline pawns · ${(d.claims||[]).length} claims · ${(d.vehicles||[]).length} vehicles · gold square = claim · blue diamond = vehicle`;
+  if (!b){
+    const extra = (d.map === 'DeepDesert') ? ' Deep Desert stays empty until someone is on that map.' : '';
+    frame.innerHTML = `<p class="muted">${esc(counts)}</p><p class="muted">No actors with transforms on this map yet.${extra}</p>`;
+    return;
+  }
+  let marks = '';
+  for (const c of claims){
+    const [cx,cy] = haggaXY(b, c.x, c.y);
+    const who = c.owner_name || c.name || 'claim';
+    marks += `<rect class="mapdot" x="${(cx-4.5).toFixed(1)}" y="${(cy-4.5).toFixed(1)}" width="9" height="9" fill="#c4a35a" data-pid="${esc(c.owner_id||'')}"><title>${esc(who)}</title></rect>`;
+  }
+  for (const v of vehs){
+    const [cx,cy] = haggaXY(b, v.x, v.y);
+    const who = (v.owner_name ? v.owner_name+' · ' : '') + (v.name||'vehicle');
+    marks += `<polygon class="mapdot" points="${cx.toFixed(1)},${(cy-6).toFixed(1)} ${(cx+5.5).toFixed(1)},${cy.toFixed(1)} ${cx.toFixed(1)},${(cy+6).toFixed(1)} ${(cx-5.5).toFixed(1)},${cy.toFixed(1)}" fill="#6a8aaa" data-pid="${esc(v.owner_id||'')}"><title>${esc(who)}</title></polygon>`;
+  }
+  for (const p of players){
+    const [cx,cy] = haggaXY(b, p.x, p.y);
+    const fill = p.online ? '#7aa36a' : '#9a907e';
+    marks += `<circle class="mapdot" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5.5" fill="${fill}" data-pid="${esc(p.player_id||'')}"><title>${esc(p.name||p.player_id)}</title></circle>
+      <text x="${(cx+8).toFixed(1)}" y="${(cy+4).toFixed(1)}" fill="#e8e0d0" font-size="12">${esc(p.name||'')}</text>`;
+  }
+  frame.innerHTML = `<p class="muted">${esc(counts)}</p>
+    <svg class="mapsvg" viewBox="0 0 800 800" preserveAspectRatio="xMidYMid meet">
+      <rect x="36" y="36" width="728" height="728" rx="18" fill="none" stroke="#3a342a"/>
+      ${mapDecor(d.map)}
+      ${marks}
+    </svg>`;
+}
+async function loadHagga(){
+  HAGGA = await api('/api/hagga-map?map=' + encodeURIComponent(MAP_WHICH));
+  drawHagga(HAGGA);
 }
 function svgMap(title, dots){
   if (!dots.length) return `<p class="muted">${esc(title)}: no pawn dots</p>`;

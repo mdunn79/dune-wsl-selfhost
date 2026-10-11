@@ -96,6 +96,9 @@ lf "$SETUP_SRC/apply-k8s-hosts.sh" /home/dune/.dune/bin/apply-k8s-hosts.sh
 lf "$SETUP_SRC/dune-ensure-join.sh" /home/dune/.dune/bin/dune-ensure-join.sh
 lf "$SETUP_SRC/dune-maintain.sh" /home/dune/.dune/bin/dune-maintain.sh
 lf "$SETUP_SRC/dune-fix-fls-dns.sh" /home/dune/.dune/bin/dune-fix-fls-dns.sh
+if [ -f "$SETUP_SRC/dune-fls-dns.service" ]; then
+  sed 's/\r$//' "$SETUP_SRC/dune-fls-dns.service" > /home/dune/.dune/bin/dune-fls-dns.service
+fi
 lf "$SETUP_SRC/dune-set-advertise-ip.sh" /home/dune/.dune/bin/dune-set-advertise-ip.sh
 lf "$SETUP_SRC/dune-ensure-runtime.sh" /home/dune/.dune/bin/dune-ensure-runtime.sh
 lf "$SETUP_SRC/dune-repair-health.sh" /home/dune/.dune/bin/dune-repair-health.sh
@@ -164,6 +167,10 @@ fi
 if [ -f "$SETUP_SRC/coredns-custom.yaml" ]; then
   echo "=== CoreDNS Funcom FLS forward (HP3) ==="
   sed 's/\r$//' "$SETUP_SRC/coredns-custom.yaml" | kubectl apply -f -
+fi
+if [ -x /home/dune/.dune/bin/dune-fix-fls-dns.sh ]; then
+  echo "=== FLS DNS watcher (Unreal sandbox resolv; no map bounce) ==="
+  /home/dune/.dune/bin/dune-fix-fls-dns.sh --install || true
 fi
 
 echo "=== load images and Funcom operators ==="

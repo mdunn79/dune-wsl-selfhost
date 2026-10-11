@@ -1363,6 +1363,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, fn(kind))
             return
+        if path == "/api/hagga-map":
+            fn = globals().get("hagga_map")
+            if not callable(fn):
+                self._json(501, {"ok": False, "error": "extras not loaded"})
+                return
+            which = (parse_qs(u.query).get("map") or ["HaggaBasin"])[0]
+            if which not in ("HaggaBasin", "Arrakeen", "HarkoVillage", "DeepDesert"):
+                which = "HaggaBasin"
+            self._json(200, fn(which))
+            return
         if path == "/api/catalog":
             fn = globals().get("catalog")
             self._json(
