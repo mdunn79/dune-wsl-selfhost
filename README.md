@@ -237,6 +237,8 @@ Funcom’s file browser (TCP `18888`) often **denies writes** to those inis. The
 
 **`Official`** leaves Funcom’s depot defaults (PvP / security zones as Funcom ships them).
 
+After the world exists, PvP/PvE and the Experimental listing name are operator steps: **[docs/](docs/README.md)**. The bundled inis in this folder stay CasualPve / NoPVP. Do not copy live PvP values back into the pack.
+
 ## If something goes wrong
 
 - **“Run this script from an elevated PowerShell window.”** Use `Install.bat` as administrator, or re-open PowerShell as Administrator on the host.

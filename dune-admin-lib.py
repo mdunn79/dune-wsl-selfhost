@@ -86,8 +86,8 @@ def _k(file: str, key: str, cat: str, hint: str = "", section: str = "") -> dict
 
 INI_KEYS = [
     _k("UserServerCustomSettings.ini", "DifficultyLevel", "Custom difficulty", "Must stay Custom or Funcom ignores this file"),
-    _k("UserServerCustomSettings.ini", "PVPMode", "PvP", "Stay NoPVP. Limited = old Hagga wrecks, not DD-only. FullPVP = everywhere."),
-    _k("UserGame.ini", "m_bShouldForceEnablePvpOnAllPartitions", "PvP", "Keep False. True PvPs Hagga and the hubs. Official-like later: only +m_PvpEnabledPartitions=8. This world has one DD map (DeepDesert_1), not official dual PvE/PvP instances."),
+    _k("UserServerCustomSettings.ini", "PVPMode", "PvP", "NoPVP, Limited, or FullPVP. Limited is old Hagga wrecks, not Deep Desert only. See docs/pvp.md."),
+    _k("UserGame.ini", "m_bShouldForceEnablePvpOnAllPartitions", "PvP", "Keep False. True PvPs Hagga and the cities. Deep Desert only: +m_PvpEnabledPartitions=8. See docs/pvp.md."),
     _k("UserGame.ini", "m_bAreSecurityZonesEnabled", "PvP", "False allows PvP/abilities everywhere"),
     _k("UserServerCustomSettings.ini", "PlayerDamageToPlayer", "PvP", "0 to 10; 0 = no player damage"),
     _k("UserServerCustomSettings.ini", "PVPDamageStructures", "PvP", "0 to 10; 0 = structures take no PvP damage"),
