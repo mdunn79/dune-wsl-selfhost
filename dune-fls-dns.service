@@ -1,0 +1,14 @@
+[Unit]
+Description=Dune FLS DNS for hostNetwork Unreal (HP3)
+After=k3s.service
+Wants=k3s.service
+
+[Service]
+Type=simple
+Environment=HOME=/root
+ExecStart=/home/dune/.dune/bin/dune-fix-fls-dns.sh --watch
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

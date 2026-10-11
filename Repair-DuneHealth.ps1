@@ -1,4 +1,4 @@
-# 5-minute join/admin health. No Steam, depot, advertise, FLS, or wsl --shutdown.
+# 5-minute join/admin health. No Steam, depot, advertise, FLS container restart, or wsl --shutdown.
 # Map pods missing: dune-ensure-runtime.sh only. Not Ready with pods present: log only.
 # WAN down: local binds (and runtime if pods are gone). Skip while Restart-DuneBattlegroup.ps1 is running.
 # Install: .\Install-DuneScheduledHealth.ps1   Log: repair-dune-health.log

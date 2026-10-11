@@ -34,6 +34,13 @@ _ONLINE_READY = False
 _WIKI_LOCK = threading.Lock()
 _WIKI_FETCHING = False
 _CATALOG_MEM = {"t": 0.0, "v": None}
+_MAP_BOUNDS: dict = {}
+MAP_FRAMES = {
+    "HaggaBasin": {"title": "Hagga Basin", "maps": ("HaggaBasin",)},
+    "Arrakeen": {"title": "Arrakeen", "maps": ("Arrakeen",)},
+    "HarkoVillage": {"title": "Harko Village", "maps": ("HarkoVillage",)},
+    "DeepDesert": {"title": "Deep Desert", "maps": ("DeepDesert", "DeepDesert_1")},
+}
 
 GM_GATES = {
     "grant-item": "grants",
@@ -79,8 +86,8 @@ def _k(file: str, key: str, cat: str, hint: str = "", section: str = "") -> dict
 
 INI_KEYS = [
     _k("UserServerCustomSettings.ini", "DifficultyLevel", "Custom difficulty", "Must stay Custom or Funcom ignores this file"),
-    _k("UserServerCustomSettings.ini", "PVPMode", "PvP", "NoPVP / Limited / FullPVP"),
-    _k("UserGame.ini", "m_bShouldForceEnablePvpOnAllPartitions", "PvP", "True forces PvP on every partition"),
+    _k("UserServerCustomSettings.ini", "PVPMode", "PvP", "Stay NoPVP. Limited = old Hagga wrecks, not DD-only. FullPVP = everywhere."),
+    _k("UserGame.ini", "m_bShouldForceEnablePvpOnAllPartitions", "PvP", "Keep False. True PvPs Hagga and the hubs. Official-like later: only +m_PvpEnabledPartitions=8. This world has one DD map (DeepDesert_1), not official dual PvE/PvP instances."),
     _k("UserGame.ini", "m_bAreSecurityZonesEnabled", "PvP", "False allows PvP/abilities everywhere"),
     _k("UserServerCustomSettings.ini", "PlayerDamageToPlayer", "PvP", "0 to 10; 0 = no player damage"),
     _k("UserServerCustomSettings.ini", "PVPDamageStructures", "PvP", "0 to 10; 0 = structures take no PvP damage"),
@@ -305,6 +312,7 @@ def bind(main) -> None:
     M.finish_gm = finish_gm
     M.stamp_op = stamp_op
     M.world_objects = world_objects
+    M.hagga_map = hagga_map
     M.social_intel = social_intel
     M.public_status = public_status
     M.public_status_page = public_status_page
@@ -775,6 +783,147 @@ def overview_map() -> dict:
             }
         )
     return {"dots": dots, "count": len(dots)}
+
+
+def _xy_of(text: str):
+    loc = M._parse_xyz(text or "")
+    if not loc:
+        return None
+    return loc["x"], loc["y"]
+
+
+def _map_in_sql(maps: tuple) -> str:
+    ok = []
+    for m in maps:
+        if re.match(r"^[A-Za-z][A-Za-z0-9_]*$", m or ""):
+            ok.append("'%s'" % m)
+    return ",".join(ok) if ok else "'HaggaBasin'"
+
+
+def _map_bounds(maps: tuple) -> dict | None:
+    key = ",".join(maps)
+    now = time.time()
+    cached = _MAP_BOUNDS.get(key)
+    if cached and now - float(cached.get("t") or 0) < 120:
+        return cached.get("v")
+    xs: list[float] = []
+    ys: list[float] = []
+    for r in _psql_rows(
+        "SELECT transform::text FROM dune.actors "
+        "WHERE map IN (%s) AND transform IS NOT NULL LIMIT 2000" % _map_in_sql(maps)
+    ):
+        xy = _xy_of(r[0] if r else "")
+        if xy:
+            xs.append(xy[0])
+            ys.append(xy[1])
+    if not xs:
+        b = None
+    else:
+        min_x, max_x, min_y, max_y = min(xs), max(xs), min(ys), max(ys)
+        pad_x = max((max_x - min_x) * 0.08, 4000.0)
+        pad_y = max((max_y - min_y) * 0.08, 4000.0)
+        b = {
+            "min_x": min_x - pad_x,
+            "max_x": max_x + pad_x,
+            "min_y": min_y - pad_y,
+            "max_y": max_y + pad_y,
+        }
+    _MAP_BOUNDS[key] = {"t": now, "v": b}
+    return b
+
+
+def hagga_map(which: str = "HaggaBasin") -> dict:
+    """Pins for one authored map. South is high Unreal Y. SELECT only."""
+    spec = MAP_FRAMES.get(which) or MAP_FRAMES["HaggaBasin"]
+    maps = spec["maps"]
+    in_sql = _map_in_sql(maps)
+    hid = (M.world_host_id() or "").replace("'", "")
+    user_sql = (
+        "CASE WHEN upper(acc.\"user\"::text) = '%s' THEN acc.funcom_id::text ELSE "
+        "COALESCE(NULLIF(acc.\"user\"::text,''), acc.funcom_id::text, '') END" % hid
+        if hid
+        else 'COALESCE(NULLIF(acc."user"::text,\'\'), acc.funcom_id::text, \'\')'
+    )
+    idx = _owner_index()
+    players = []
+    for r in _psql_rows(
+        "SELECT COALESCE(ps.character_name,''), %s, "
+        "LOWER(COALESCE(ps.online_status::text,'')), act.transform::text "
+        "FROM dune.player_state ps "
+        "JOIN dune.actors act ON act.id = ps.player_pawn_id "
+        "LEFT JOIN dune.accounts acc ON acc.id = ps.account_id "
+        "WHERE act.map IN (%s) AND act.transform IS NOT NULL LIMIT 200" % (user_sql, in_sql)
+    ):
+        xy = _xy_of(r[3] if len(r) > 3 else "")
+        if not xy:
+            continue
+        players.append(
+            {
+                "name": r[0] if r else "",
+                "player_id": r[1] if len(r) > 1 else "",
+                "online": (r[2] if len(r) > 2 else "") in ("online", "1", "t", "true"),
+                "x": xy[0],
+                "y": xy[1],
+            }
+        )
+    claims = []
+    for r in _psql_rows(
+        "SELECT pa.actor_id::text, COALESCE(pa.actor_name,''), COALESCE(a.transform::text,''), "
+        "COALESCE(r.player_id::text,'') "
+        "FROM dune.permission_actor pa "
+        "JOIN dune.permission_actor_rank r ON r.permission_actor_id = pa.actor_id AND r.rank = 1 "
+        "JOIN dune.actors a ON a.id = pa.actor_id "
+        "WHERE pa.actor_type = 4 AND a.map IN (%s) AND a.transform IS NOT NULL LIMIT 400" % in_sql
+    ):
+        xy = _xy_of(r[2] if len(r) > 2 else "")
+        if not xy:
+            continue
+        rec = {
+            "id": r[0] if r else "",
+            "name": (r[1] if len(r) > 1 else "") or "claim",
+            "x": xy[0],
+            "y": xy[1],
+        }
+        _attach_owner(rec, idx, r[3] if len(r) > 3 else "")
+        claims.append(rec)
+    vehicles = []
+    for r in _psql_rows(
+        "SELECT v.id::text, COALESCE(a.class,''), COALESCE(a.transform::text,''), "
+        "COALESCE((SELECT r.player_id::text FROM dune.permission_actor_rank r "
+        " JOIN dune.permission_actor pa ON pa.actor_id = r.permission_actor_id "
+        " WHERE pa.actor_id = v.id AND r.rank = 1 LIMIT 1), ''), "
+        "COALESCE((SELECT rv.character_id::text FROM dune.recovered_vehicles rv "
+        " WHERE rv.vehicle_id = v.id LIMIT 1), '') "
+        "FROM dune.vehicles v JOIN dune.actors a ON a.id = v.id "
+        "WHERE a.map IN (%s) AND a.transform IS NOT NULL LIMIT 400" % in_sql
+    ):
+        cls = r[1] if len(r) > 1 else ""
+        if "Fabricator" in (cls or ""):
+            continue
+        xy = _xy_of(r[2] if len(r) > 2 else "")
+        if not xy:
+            continue
+        rec = {
+            "id": r[0] if r else "",
+            "name": _short_class(cls) or "vehicle",
+            "x": xy[0],
+            "y": xy[1],
+        }
+        owner = (r[3] if len(r) > 3 else "") or (r[4] if len(r) > 4 else "")
+        _attach_owner(rec, idx, owner)
+        vehicles.append(rec)
+    bounds = _map_bounds(maps)
+    key = which if which in MAP_FRAMES else "HaggaBasin"
+    return {
+        "ok": True,
+        "map": key,
+        "title": spec["title"],
+        "bounds": bounds,
+        "south": "high-y",
+        "players": players,
+        "claims": claims,
+        "vehicles": vehicles,
+    }
 
 
 def social_intel() -> dict:

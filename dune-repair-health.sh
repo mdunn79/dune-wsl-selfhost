@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 5-minute local health: missing LAN join binds, dune-admin, and runtime only if map pods are gone.
-# No Steam, depot, advertise, or FLS. Not Ready (pods still there) does not start maps.
+# 5-minute local health: missing LAN join binds, dune-admin, FLS DNS watcher, and runtime only if map pods are gone.
+# No Steam, depot, advertise, or FLS container restart. Not Ready (pods still there) does not start maps.
 set -uo pipefail
 export HOME=/home/dune
 RUNTIME=/home/dune/.dune/bin/dune-ensure-runtime.sh
@@ -17,6 +17,15 @@ if systemctl is-active --quiet dune-admin.service; then
 else
   echo "dune-admin down; starting"
   sudo systemctl start dune-admin.service && echo "dune-admin started" || echo "WARNING: dune-admin start failed" >&2
+fi
+if systemctl is-active --quiet dune-fls-dns.service; then
+  echo "dune-fls-dns active"
+elif [ -f /etc/systemd/system/dune-fls-dns.service ]; then
+  echo "dune-fls-dns down; starting"
+  sudo systemctl start dune-fls-dns.service && echo "dune-fls-dns started" || echo "WARNING: dune-fls-dns start failed" >&2
+else
+  echo "dune-fls-dns unit missing; installing"
+  sudo /home/dune/.dune/bin/dune-fix-fls-dns.sh --install && echo "dune-fls-dns installed" || echo "WARNING: dune-fls-dns install failed" >&2
 fi
 
 k3s_up() { timeout 5 sudo kubectl get --raw=/readyz >/dev/null 2>&1; }

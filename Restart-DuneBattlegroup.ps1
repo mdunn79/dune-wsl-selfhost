@@ -114,7 +114,8 @@ os.chmod(dst, 0o755)
 names = [
     'dune-maintain.sh', 'dune-ensure-join.sh', 'dune-ensure-runtime.sh',
     'dune-repair-health.sh',
-    'dune-fix-fls-dns.sh', 'dune-set-advertise-ip.sh', 'apply-k8s-hosts.sh',
+    'dune-fix-fls-dns.sh', 'dune-fls-dns.service', 'dune-set-advertise-ip.sh',
+    'apply-k8s-hosts.sh',
     'coredns-custom.yaml', 'dune-admin.py', 'dune-admin.sh',
     'dune-admin.service', 'dune-admin-lib.py', 'dune-admin.html',
 ]
@@ -155,16 +156,16 @@ print('HELPERS_CHANGED' if changed else 'HELPERS_UNCHANGED')
     $changed = $syncOut -match "HELPERS_CHANGED"
     Write-Log $(if ($changed) { "helpers-synced (files changed)" } else { "helpers-synced (unchanged)" })
     if ($changed) {
-        & wsl.exe -d $WslDistro -u root -- bash -lc "/home/dune/.dune/bin/dune-admin.sh --install"
+        & wsl.exe -d $WslDistro -u root -- bash -lc "/home/dune/.dune/bin/dune-admin.sh --install; /home/dune/.dune/bin/dune-fix-fls-dns.sh --install"
         if ($LASTEXITCODE -ne 0) {
-            Write-Log "WARNING: dune-admin install/restart failed"
+            Write-Log "WARNING: dune-admin or FLS DNS watcher install failed"
         } else {
-            Write-Log "dune-admin listening on LAN TCP 18889"
+            Write-Log "dune-admin listening on LAN TCP 18889; FLS DNS watcher enabled"
         }
     } else {
-        & wsl.exe -d $WslDistro -u root -- bash -lc "systemctl is-active --quiet dune-admin.service || /home/dune/.dune/bin/dune-admin.sh --install"
+        & wsl.exe -d $WslDistro -u root -- bash -lc "systemctl is-active --quiet dune-admin.service || /home/dune/.dune/bin/dune-admin.sh --install; systemctl is-active --quiet dune-fls-dns.service || /home/dune/.dune/bin/dune-fix-fls-dns.sh --install"
         if ($LASTEXITCODE -ne 0) {
-            Write-Log "WARNING: dune-admin was down and did not start"
+            Write-Log "WARNING: dune-admin or FLS DNS watcher was down and did not start"
         }
     }
     $ErrorActionPreference = $savedEap
