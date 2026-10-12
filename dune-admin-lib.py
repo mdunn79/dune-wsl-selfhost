@@ -35,6 +35,39 @@ _WIKI_LOCK = threading.Lock()
 _WIKI_FETCHING = False
 _CATALOG_MEM = {"t": 0.0, "v": None}
 _MAP_BOUNDS: dict = {}
+_MAP_MARKERS: dict = {}
+_MAP_NAME_IDS: dict = {}
+MARKER_GROUP = {
+    "RhyoliteOre": "ore",
+    "AzuriteOre": "ore",
+    "MagnetiteOre": "ore",
+    "DolomiteRock": "ore",
+    "ErythriteOre": "ore",
+    "BauxiteOre": "ore",
+    "BasaltOre": "ore",
+    "RhyolitePickup": "pickup",
+    "AzuritePickup": "pickup",
+    "MagnetitePickup": "pickup",
+    "DolomitePickup": "pickup",
+    "ErythritePickup": "pickup",
+    "BauxitePickup": "pickup",
+    "BasaltPickup": "pickup",
+    "FuelCellPart": "pickup",
+    "ScrapMetalPart": "pickup",
+    "ScrapMetalWreckage": "wreck",
+    "FuelCellWreckage": "wreck",
+    "Shipwreck": "wreck",
+    "BrittleBush": "plant",
+    "PrimroseField": "plant",
+    "EnemyCamp": "camp",
+    "EnemyOutpost": "camp",
+    "EnemyLaborOutpost": "camp",
+    "Cave": "cave",
+    "Ecolab": "cave",
+    "Hazard_Quicksand": "hazard",
+    "Hazard_Drumsand": "hazard",
+    "Hazard_Radiation": "hazard",
+}
 _MAP_DIR = Path(__file__).resolve().with_name("admin-maps")
 # Hagga: published ~8073m x 8140m, Unreal cm, origin on-map (live markers both signs).
 # Deep Desert: 9x9 / 576 km2 ~24 km, origin assumed center like Hagga.
@@ -835,6 +868,52 @@ def _map_image_url(spec: dict) -> str:
     return "/maps/" + name if (_MAP_DIR / name).is_file() else ""
 
 
+def _map_name_id(which: str) -> int:
+    now = time.time()
+    cached = _MAP_NAME_IDS.get(which)
+    if cached and now - float(cached.get("t") or 0) < 3600:
+        return int(cached.get("v") or 0)
+    name = re.sub(r"[^A-Za-z0-9_]", "", which or "")
+    rows = _psql_rows(
+        "SELECT map_name_id::text FROM dune.map_names WHERE map_name = '%s' LIMIT 1" % name
+    )
+    mid = 0
+    if rows and rows[0] and str(rows[0][0]).isdigit():
+        mid = int(rows[0][0])
+    _MAP_NAME_IDS[which] = {"t": now, "v": mid}
+    return mid
+
+
+def _map_resources(which: str) -> list:
+    now = time.time()
+    cached = _MAP_MARKERS.get(which)
+    if cached and now - float(cached.get("t") or 0) < 30:
+        return cached.get("v") or []
+    mid = _map_name_id(which)
+    out = []
+    if mid:
+        for r in _psql_rows(
+            "SELECT marker_type, position::text FROM dune.markers "
+            "WHERE map_name_id = %d LIMIT 8000" % mid
+        ):
+            kind = r[0] if r else ""
+            if not kind or kind == "NoIcon":
+                continue
+            xy = _xy_of(r[1] if len(r) > 1 else "")
+            if not xy:
+                continue
+            out.append(
+                {
+                    "t": kind,
+                    "g": MARKER_GROUP.get(kind, "poi"),
+                    "x": xy[0],
+                    "y": xy[1],
+                }
+            )
+    _MAP_MARKERS[which] = {"t": now, "v": out}
+    return out
+
+
 def _map_bounds(maps: tuple) -> dict | None:
     key = ",".join(maps)
     now = time.time()
@@ -961,6 +1040,7 @@ def hagga_map(which: str = "HaggaBasin") -> dict:
         "players": players,
         "claims": claims,
         "vehicles": vehicles,
+        "resources": _map_resources(key),
     }
 
 
