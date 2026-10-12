@@ -146,13 +146,15 @@ a{color:var(--acc)}
       </div>
       <div class="row">
         <label><input type="checkbox" id="mapPlant" checked/> Plants</label>
-        <label><input type="checkbox" id="mapWreck" checked/> Wrecks</label>
+        <label><input type="checkbox" id="mapWreck" checked/> Salvage wrecks</label>
         <label><input type="checkbox" id="mapCamp"/> Camps</label>
         <label><input type="checkbox" id="mapCave"/> Caves</label>
         <label><input type="checkbox" id="mapHaz"/> Hazards</label>
         <label><input type="checkbox" id="mapPoi"/> POI</label>
         <label><input type="checkbox" id="mapPickup"/> Pickups</label>
+        <button type="button" class="act" id="mapResNone">Uncheck all</button>
       </div>
+      <p class="muted">Granite brown · Copper blue · Iron gray · Carbon tan · Erythrite magenta · Aluminum pale · Basalt dark. Pins are discovered POIs, not every rock. Ore ticks are nodes only; pickups are a separate box.</p>
     </div>
     <div class="row">
       <button type="button" class="act" id="mapIn">+</button>
@@ -390,10 +392,16 @@ function show(id){
   if (id==='social') loadSocial();
 }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => show(b.dataset.tab));
-['mapOn','mapOff','mapClaim','mapVeh','mapRhyolite','mapAzurite','mapMagnetite','mapDolomite','mapErythrite','mapBauxite','mapBasalt','mapPlant','mapWreck','mapCamp','mapCave','mapHaz','mapPoi','mapPickup'].forEach(id => {
+const MAP_ACTOR_IDS = ['mapOn','mapOff','mapClaim','mapVeh'];
+const MAP_RES_IDS = ['mapRhyolite','mapAzurite','mapMagnetite','mapDolomite','mapErythrite','mapBauxite','mapBasalt','mapPlant','mapWreck','mapCamp','mapCave','mapHaz','mapPoi','mapPickup'];
+MAP_ACTOR_IDS.concat(MAP_RES_IDS).forEach(id => {
   const el = $('#'+id);
   if (el) el.onchange = () => { if (HAGGA) drawHagga(HAGGA); };
 });
+if ($('#mapResNone')) $('#mapResNone').onclick = () => {
+  MAP_RES_IDS.forEach(id => { const el = $('#'+id); if (el) el.checked = false; });
+  if (HAGGA) drawHagga(HAGGA);
+};
 if ($('#mapwhich')) $('#mapwhich').onclick = (e) => {
   const b = e.target.closest('button[data-map]');
   if (!b) return;
@@ -685,7 +693,7 @@ function drawHagga(d){
   const nOn = (d.players||[]).filter(p=>p.online).length;
   const resources = resMode ? (d.resources||[]).filter(m => resourceOn(m, L)) : [];
   const counts = resMode
-    ? `${resources.length} showing / ${(d.resources||[]).length} POIs · copper=azurite, iron=magnetite, carbon=dolomite, aluminum=bauxite`
+    ? `${resources.length} showing / ${(d.resources||[]).length} POIs`
     : `${nOn} online · ${(d.players||[]).length - nOn} offline pawns · ${(d.claims||[]).length} claims · ${(d.vehicles||[]).length} vehicles · gold square = claim · blue diamond = vehicle`;
   if (!b){
     const extra = (d.map === 'DeepDesert') ? ' Deep Desert stays empty until someone is on that map.' : '';
@@ -698,7 +706,8 @@ function drawHagga(d){
   const resName = {RhyoliteOre:'Granite', RhyolitePickup:'Granite pickup', AzuriteOre:'Copper', AzuritePickup:'Copper pickup',
     MagnetiteOre:'Iron', MagnetitePickup:'Iron pickup', DolomiteRock:'Carbon', DolomitePickup:'Carbon pickup',
     BauxiteOre:'Aluminum', BauxitePickup:'Aluminum pickup', BasaltOre:'Basalt', BasaltPickup:'Basalt pickup',
-    ScrapMetalPart:'Salvage', ScrapMetalWreckage:'Salvage wreck', FuelCellPart:'Fuel cell', FuelCellWreckage:'Fuel wreck'};
+    ScrapMetalPart:'Salvage', ScrapMetalWreckage:'Salvage wreck', FuelCellPart:'Fuel cell', FuelCellWreckage:'Fuel wreck',
+    Shipwreck:'Shipwreck'};
   let marks = '';
   const resR = resources.length <= 8 ? 6 : (resources.length <= 40 ? 3.4 : 2.4);
   for (const m of resources){
@@ -727,7 +736,10 @@ function drawHagga(d){
     ? `<image href="${esc(href)}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/>`
     : `<rect x="36" y="36" width="${W-72}" height="${H-72}" rx="18" fill="none" stroke="#3a342a"/>${mapDecor(d.map)}`;
   let empty = '';
-  if (resMode && !resources.length) empty = `<p class="muted">${(d.resources||[]).length ? 'Nothing selected, or no matching POIs on this map.' : 'No resource POIs in Postgres for this map.'}</p>`;
+  if (resMode && !resources.length){
+    if (d.map === 'Arrakeen' || d.map === 'HarkoVillage') empty = `<p class="muted">City pins are vendors and landmarks. Tick POI.</p>`;
+    else empty = `<p class="muted">${(d.resources||[]).length ? 'Nothing selected, or no matching POIs on this map.' : 'No resource POIs in Postgres for this map.'}</p>`;
+  }
   else if (!resMode && !players.length && !claims.length && !vehs.length) empty = `<p class="muted">${(d.map === 'DeepDesert') ? 'No actors on Deep Desert yet.' : 'No actors with transforms on this map yet.'}</p>`;
   frame.innerHTML = `<p class="muted">${esc(counts)}</p>${empty}
     <div id="mapstage"><div id="mappan"><svg class="mapsvg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">${bg}${marks}</svg></div></div>`;

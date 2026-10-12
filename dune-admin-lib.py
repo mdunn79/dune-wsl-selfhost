@@ -56,7 +56,7 @@ MARKER_GROUP = {
     "ScrapMetalPart": "pickup",
     "ScrapMetalWreckage": "wreck",
     "FuelCellWreckage": "wreck",
-    "Shipwreck": "wreck",
+    "Shipwreck": "poi",
     "BrittleBush": "plant",
     "PrimroseField": "plant",
     "EnemyCamp": "camp",
@@ -894,7 +894,7 @@ def _map_resources(which: str) -> list:
     if mid:
         for r in _psql_rows(
             "SELECT marker_type, position::text FROM dune.markers "
-            "WHERE map_name_id = %d LIMIT 8000" % mid
+            "WHERE map_name_id = %d LIMIT 20000" % mid
         ):
             kind = r[0] if r else ""
             if not kind or kind == "NoIcon":

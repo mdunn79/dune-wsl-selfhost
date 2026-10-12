@@ -11,8 +11,8 @@ It always **looks**: Steam public buildid for app `4754530`, map Ready, join TCP
 - Steam depot download + map roll only if the public buildid differs from the installed appmanifest, or there is no local manifest.
 - `battlegroup start` only if Survival/Overmap pods are not Running. Joinable is Funcom Running / true, not kubectl 1/1.
 - Advertise/listing patch (and a map roll) only if the public IPv4 actually changed.
-- Join/director bind only if those ports are missing. FLS DNS does **not** stop Survival/Overmap on a no-op hour. `dune-fls-dns.service` rewrites Unreal sandbox DNS when Funcom recreates pods; the one-shot container restart still runs only after a depot apply, map start, or advertise change.
-- Helper files are recopied only when they differ; the LAN admin is restarted only when those files changed (or the service was down).
+- Join/director bind only if those ports are missing. `dune-fls-dns.service` rewrites Unreal sandbox DNS when Funcom recreates pods. It does not stop Survival/Overmap on a no-op hour.
+- Helpers recopy only when they differ. LAN admin restarts only if those files changed or the service was down.
 - `wsl --shutdown` only if `.wslconfig` needed `autoMemoryReclaim=disabled`, or `wsl.exe` is wedged.
 
 A no-op hour is about 1–2 minutes. A real patch can take around 45 minutes. After a patch it waits until Gateway is Healthy and both maps stay Running / true, then binds join ports. Output: `restart-dune-battlegroup.log`.
@@ -37,7 +37,7 @@ Uninstall: `.\Install-DuneScheduledMaintain.ps1 -Uninstall`. If a hand-made task
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-DuneScheduledHealth.ps1"
 ```
 
-Rebinds LAN TCP `31982` / `31519` if a `kubectl port-forward` died, and starts `dune-admin.service` / `dune-fls-dns.service` if either is down. If the FLS DNS unit file was never installed, it runs `--install`. File Browser `18888` is a warning only if it is missing. If Survival and Overmap **pods are missing** (or k3s has no world namespace), it runs `dune-ensure-runtime.sh`. It does **not** query Steam, apply a depot, refresh advertise IP, or restart Unreal for FLS DNS. Pods present but not Ready is a log line only. If home WAN is down, it still does local binds and runtime restore, and it will not touch Funcom listing. It skips the tick while hourly maintain is running. Log: `repair-dune-health.log`.
+Rebinds LAN TCP `31982` / `31519` if a port-forward died. Starts `dune-admin.service` / `dune-fls-dns.service` if down (`--install` if the DNS unit was never copied). File Browser `18888` missing is a warning only. Missing Survival/Overmap pods (or no world namespace): `dune-ensure-runtime.sh`. It does not query Steam, apply a depot, refresh advertise IP, or restart Unreal for FLS DNS. Pods present but not Ready: log only. WAN down: local binds still run; listing is not touched. Skips the tick while hourly maintain is running. Log: `repair-dune-health.log`.
 
 Uninstall: `.\Install-DuneScheduledHealth.ps1 -Uninstall`. After an ISP outage, leave advertise/IP refresh to the next hourly maintain (a 5-minute advertise patch would roll maps).
 

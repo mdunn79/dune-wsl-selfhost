@@ -4,7 +4,7 @@ Runs Funcom’s **Linux** battlegroup inside WSL2. It does **not** use Funcom’
 
 **The host** is the Windows 11 PC where you run this installer — your machine, not anyone else’s. Players can join from the LAN or from the internet if you port-forward. Do **not** join the world from the host itself (WSL mirrored networking does not hairpin).
 
-If the listing uses your **public** IPv4 (`AdvertiseIp = "auto"`), a second PC in the house often rubberbands. Install `lan-redirect` on that gaming PC, not on the host: **[docs/house-pc.md](docs/house-pc.md)**. After-install ops: **[docs/](docs/README.md)**.
+After-install ops (PvP, listing name, house PCs, maintain): **[docs/](docs/README.md)**.
 
 The scripts in this folder are MIT. The game files SteamCMD downloads are Funcom’s; this pack does not redistribute them.
 

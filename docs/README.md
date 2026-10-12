@@ -1,6 +1,6 @@
 # Operator notes
 
-These are actions the installer does not do for you. They need a human. Rates and PvP never hot-reload.
+The installer does not do these. Rates and PvP never hot-reload.
 
 First install stays in the pack [README](../README.md). The LAN admin is [ADMIN-PANEL.md](../ADMIN-PANEL.md).
 
