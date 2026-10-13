@@ -73,19 +73,48 @@ for it in d.get("items") or []:
     try:
         cur = open(path, "r", encoding="utf-8", errors="replace").read()
     except OSError:
-        continue
+        cur = ""
     if "nameserver 8.8.8.8" in cur and "ndots:1" in cur:
         if not quiet:
             print("resolv already patched", name, file=sys.stderr)
-        continue
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(body)
-    except OSError as e:
-        print("skip resolv %s: %s" % (name, e), file=sys.stderr)
-        continue
-    print(name)
-    print("patch resolv", name, file=sys.stderr)
+    else:
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(body)
+            print(name)
+            print("patch resolv", name, file=sys.stderr)
+        except OSError as e:
+            print("skip resolv %s: %s" % (name, e), file=sys.stderr)
+    hosts_src = "/home/dune/.dune/dune-hosts.txt"
+    tag = "# dune-k8s-services"
+    extra = ""
+    if os.path.isfile(hosts_src):
+        try:
+            extra = open(hosts_src, encoding="utf-8").read()
+        except OSError:
+            extra = ""
+    hp = ""
+    for root in roots:
+        cand = os.path.join(root, sid, "hosts")
+        if os.path.isfile(cand):
+            hp = cand
+            break
+    if extra and tag in extra and hp:
+        try:
+            curh = open(hp, encoding="utf-8", errors="replace").read()
+            keep = [ln for ln in curh.splitlines() if tag not in ln]
+            while keep and keep[-1].strip() == "":
+                keep.pop()
+            newh = "\n".join(keep) + "\n" + extra
+            if not extra.endswith("\n"):
+                newh += "\n"
+            if newh != curh:
+                with open(hp, "w", encoding="utf-8") as f:
+                    f.write(newh)
+                if not quiet:
+                    print("hosts patched", name, file=sys.stderr)
+        except OSError as e:
+            print("skip hosts %s: %s" % (name, e), file=sys.stderr)
 '
 }
 
@@ -124,8 +153,14 @@ install_unit() {
 
 watch_loop() {
   echo "=== dune-fix-fls-dns watch ==="
+  n=0
   while true; do
     FLS_DNS_QUIET=1 patch_game_resolv || true
+    n=$((n+1))
+    if [ "$n" -ge 12 ]; then
+      n=0
+      /home/dune/.dune/bin/apply-k8s-hosts.sh >/dev/null 2>&1 || true
+    fi
     sleep 5
   done
 }

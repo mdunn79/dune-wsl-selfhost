@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Map Funcom k8s service names to pod IPs in /etc/hosts.
+# Map Funcom k8s service names to pod IPs in /etc/hosts and Unreal sandbox hosts.
 # hostNetwork game servers cannot TLS through ClusterIP/kube-proxy.
 set -euo pipefail
 TAG='# dune-k8s-services'
@@ -58,3 +58,58 @@ if [ -f /home/dune/.dune/dune-fls-hosts.txt ]; then
   sudo sed -i "/${FLS_TAG}/d" /etc/hosts
   sudo sh -c 'cat /home/dune/.dune/dune-fls-hosts.txt >> /etc/hosts'
 fi
+
+# hostNetwork Unreal uses the containerd sandbox hosts file, not WSL /etc/hosts.
+sudo python3 - "$TAG" <<'PY' || true
+import json, os, subprocess, sys
+tag = sys.argv[1]
+body_path = "/home/dune/.dune/dune-hosts.txt"
+if not os.path.isfile(body_path):
+    raise SystemExit(0)
+body = open(body_path, encoding="utf-8").read()
+if tag not in body:
+    raise SystemExit(0)
+d = {"items": []}
+for cmd in (["k3s", "crictl", "pods", "-o", "json"], ["sudo", "k3s", "crictl", "pods", "-o", "json"]):
+    try:
+        d = json.loads(subprocess.check_output(cmd, text=True, timeout=30))
+        break
+    except Exception:
+        continue
+roots = [
+    "/var/lib/rancher/k3s/agent/containerd/io.containerd.grpc.v1.cri/sandboxes",
+    "/run/k3s/containerd/io.containerd.grpc.v1.cri/sandboxes",
+]
+for it in d.get("items") or []:
+    name = ((it.get("metadata") or {}).get("name") or "")
+    if "-sg-" not in name:
+        continue
+    sid = it.get("id") or ""
+    path = ""
+    for root in roots:
+        p = os.path.join(root, sid, "hosts")
+        if os.path.isfile(p):
+            path = p
+            break
+    if not path:
+        continue
+    try:
+        cur = open(path, encoding="utf-8", errors="replace").read()
+    except OSError:
+        continue
+    keep = [ln for ln in cur.splitlines() if tag not in ln]
+    while keep and keep[-1].strip() == "":
+        keep.pop()
+    new = "\n".join(keep) + "\n" + body
+    if not body.endswith("\n"):
+        new += "\n"
+    if new == cur:
+        continue
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(new)
+    except OSError as e:
+        print("skip sandbox hosts %s: %s" % (name, e), file=sys.stderr)
+        continue
+    print("sandbox hosts", name)
+PY

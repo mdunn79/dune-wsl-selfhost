@@ -11,7 +11,7 @@ It always **looks**: Steam public buildid for app `4754530`, map Ready, join TCP
 - Steam depot download + map roll only if the public buildid differs from the installed appmanifest, or there is no local manifest.
 - `battlegroup start` only if Survival/Overmap pods are not Running. Joinable is Funcom Running / true, not kubectl 1/1.
 - Advertise/listing patch (and a map roll) only if the public IPv4 actually changed.
-- Join/director bind only if those ports are missing. `dune-fls-dns.service` rewrites Unreal sandbox DNS when Funcom recreates pods. It does not stop Survival/Overmap on a no-op hour.
+- Join/director bind only if those ports are missing. `dune-fls-dns.service` rewrites Unreal sandbox DNS and MQ/DB host IPs when Funcom recreates pods. It does not stop Survival/Overmap on a no-op hour.
 - Helpers recopy only when they differ. LAN admin restarts only if those files changed or the service was down.
 - `wsl --shutdown` only if `.wslconfig` needed `autoMemoryReclaim=disabled`, or `wsl.exe` is wedged.
 
