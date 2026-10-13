@@ -7,6 +7,7 @@
 <style>
 :root { --bg:#12110e; --card:#1c1a16; --ink:#e8e0d0; --muted:#9a907e; --acc:#c4a35a; --bad:#c45a4a; --ok:#7aa36a; }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{margin:0;font:15px/1.45 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--ink)}
 header{padding:14px 18px;border-bottom:1px solid #2a261f;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
 h1{font-size:18px;margin:0;color:var(--acc)}
@@ -38,9 +39,13 @@ a{color:var(--acc)}
 .notice{background:#2a261f;border:1px solid var(--acc);padding:8px 10px;border-radius:6px;margin:0 0 10px}
 .ini-drift input{border-color:var(--acc)}
 .ovsvg{background:#0e0d0b;border:1px solid #2a261f;border-radius:6px;display:block;width:100%;max-width:440px;height:260px}
-.mapsvg{background:#0e0d0b;border:1px solid #2a261f;border-radius:6px;display:block;width:100%;max-width:720px;aspect-ratio:1;height:auto}
+.mapsvg{background:#0e0d0b;display:block;width:100%;height:auto;border:0}
+.mapsvg image{pointer-events:none}
 .mapdot{cursor:pointer}
-#mapwhich button.on{background:var(--acc);color:#1c160a}
+#mapwhich button.on,#mapmode button.on{background:var(--acc);color:#1c160a}
+#mapstage{overflow:hidden;width:100%;max-width:720px;border:1px solid #2a261f;border-radius:6px;background:#0e0d0b;cursor:grab;touch-action:none}
+#mapstage:active{cursor:grabbing}
+#mappan{transform-origin:0 0}
 </style>
 </head>
 <body>
@@ -117,13 +122,45 @@ a{color:var(--acc)}
       <button type="button" class="act" data-map="HarkoVillage">Harko</button>
       <button type="button" class="act" data-map="DeepDesert">Deep Desert</button>
     </div>
+    <div class="row" id="mapmode">
+      <button type="button" class="act" data-mode="actors">Actors</button>
+      <button type="button" class="act" data-mode="resources">Resources</button>
+    </div>
     <h3 id="maptitle" style="margin:8px 0">Hagga Basin</h3>
-    <p class="muted">Labeled frame, not Funcom art. Each tab is its own XY space. South at the bottom (high Unreal Y). Click a pin to fill Character/Tools id.</p>
-    <div class="row">
+    <p class="muted" id="maphint">In-game map when a screenshot is in admin-maps/. Each tab is its own XY space. South at the bottom (high Unreal Y). Wheel zoom, drag to pan. Auto-refresh reloads every 15s.</p>
+    <div class="row" id="mapActorLayers">
       <label><input type="checkbox" id="mapOn" checked/> Online</label>
       <label><input type="checkbox" id="mapOff" checked/> Offline pawns</label>
       <label><input type="checkbox" id="mapClaim" checked/> Claims</label>
       <label><input type="checkbox" id="mapVeh" checked/> Vehicles</label>
+    </div>
+    <div id="mapResLayers" hidden>
+      <div class="row">
+        <label><input type="checkbox" id="mapRhyolite" checked/> Granite</label>
+        <label><input type="checkbox" id="mapAzurite" checked/> Copper</label>
+        <label><input type="checkbox" id="mapMagnetite" checked/> Iron</label>
+        <label><input type="checkbox" id="mapDolomite" checked/> Carbon</label>
+        <label><input type="checkbox" id="mapErythrite" checked/> Erythrite</label>
+        <label><input type="checkbox" id="mapBauxite" checked/> Aluminum</label>
+        <label><input type="checkbox" id="mapBasalt" checked/> Basalt</label>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="mapPlant" checked/> Plants</label>
+        <label><input type="checkbox" id="mapWreck" checked/> Salvage wrecks</label>
+        <label><input type="checkbox" id="mapCamp"/> Camps</label>
+        <label><input type="checkbox" id="mapCave"/> Caves</label>
+        <label><input type="checkbox" id="mapHaz"/> Hazards</label>
+        <label><input type="checkbox" id="mapPoi"/> POI</label>
+        <label><input type="checkbox" id="mapPickup"/> Pickups</label>
+        <button type="button" class="act" id="mapResNone">Uncheck all</button>
+      </div>
+      <p class="muted">Granite brown · Copper blue · Iron gray · Carbon tan · Erythrite magenta · Aluminum pale · Basalt dark. Pins are discovered POIs, not every rock. Ore ticks are nodes only; pickups are a separate box.</p>
+    </div>
+    <div class="row">
+      <button type="button" class="act" id="mapIn">+</button>
+      <button type="button" class="act" id="mapOut">-</button>
+      <button type="button" class="act" id="mapReset">Reset zoom</button>
+      <span class="muted" id="mapZlab">1x</span>
     </div>
     <div id="haggaframe">Open this tab to load.</div>
   </div>
@@ -340,6 +377,9 @@ let CATALOG = {items:[], skills:[]};
 let SEL_BACKUP = "";
 let HAGGA = null;
 let MAP_WHICH = 'HaggaBasin';
+let MAP_MODE = 'actors';
+let MAP_Z = {s:1, x:0, y:0};
+let MAP_DRAG = null;
 function show(id){
   document.querySelectorAll('.tab').forEach(e => e.hidden = e.id !== id);
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab===id));
@@ -352,24 +392,65 @@ function show(id){
   if (id==='social') loadSocial();
 }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => show(b.dataset.tab));
-['mapOn','mapOff','mapClaim','mapVeh'].forEach(id => {
+const MAP_ACTOR_IDS = ['mapOn','mapOff','mapClaim','mapVeh'];
+const MAP_RES_IDS = ['mapRhyolite','mapAzurite','mapMagnetite','mapDolomite','mapErythrite','mapBauxite','mapBasalt','mapPlant','mapWreck','mapCamp','mapCave','mapHaz','mapPoi','mapPickup'];
+MAP_ACTOR_IDS.concat(MAP_RES_IDS).forEach(id => {
   const el = $('#'+id);
   if (el) el.onchange = () => { if (HAGGA) drawHagga(HAGGA); };
 });
+if ($('#mapResNone')) $('#mapResNone').onclick = () => {
+  MAP_RES_IDS.forEach(id => { const el = $('#'+id); if (el) el.checked = false; });
+  if (HAGGA) drawHagga(HAGGA);
+};
 if ($('#mapwhich')) $('#mapwhich').onclick = (e) => {
   const b = e.target.closest('button[data-map]');
   if (!b) return;
   MAP_WHICH = b.getAttribute('data-map') || 'HaggaBasin';
+  MAP_Z = {s:1, x:0, y:0};
   loadHagga();
 };
-if ($('#haggaframe')) $('#haggaframe').onclick = (e) => {
-  const t = e.target.closest('[data-pid]');
-  if (!t) return;
-  const pid = t.getAttribute('data-pid') || '';
-  if (!pid) return;
-  if ($('#cid')) $('#cid').value = pid;
-  if ($('#tid')) $('#tid').value = pid;
+if ($('#mapmode')) $('#mapmode').onclick = (e) => {
+  const b = e.target.closest('button[data-mode]');
+  if (!b) return;
+  MAP_MODE = b.getAttribute('data-mode') || 'actors';
+  setMapModeUi();
+  if (HAGGA) drawHagga(HAGGA);
 };
+if ($('#mapIn')) $('#mapIn').onclick = () => mapZoomAt(1.25);
+if ($('#mapOut')) $('#mapOut').onclick = () => mapZoomAt(1/1.25);
+if ($('#mapReset')) $('#mapReset').onclick = () => { MAP_Z = {s:1, x:0, y:0}; applyMapZoom(); };
+if ($('#haggaframe')) {
+  const host = $('#haggaframe');
+  host.onclick = (e) => {
+    const t = e.target.closest('[data-pid]');
+    if (!t) return;
+    const pid = t.getAttribute('data-pid') || '';
+    if (!pid) return;
+    if ($('#cid')) $('#cid').value = pid;
+    if ($('#tid')) $('#tid').value = pid;
+  };
+  host.addEventListener('wheel', (e) => {
+    const st = $('#mapstage');
+    if (!st || !st.contains(e.target)) return;
+    e.preventDefault();
+    const r = st.getBoundingClientRect();
+    mapZoomAt(e.deltaY < 0 ? 1.15 : 1/1.15, e.clientX - r.left, e.clientY - r.top);
+  }, {passive:false});
+  host.addEventListener('pointerdown', (e) => {
+    const st = $('#mapstage');
+    if (!st || !st.contains(e.target) || e.button !== 0) return;
+    MAP_DRAG = {x:e.clientX, y:e.clientY, ox:MAP_Z.x, oy:MAP_Z.y};
+    try { host.setPointerCapture(e.pointerId); } catch (err) {}
+  });
+  host.addEventListener('pointermove', (e) => {
+    if (!MAP_DRAG) return;
+    MAP_Z.x = MAP_DRAG.ox + (e.clientX - MAP_DRAG.x);
+    MAP_Z.y = MAP_DRAG.oy + (e.clientY - MAP_DRAG.y);
+    applyMapZoom();
+  });
+  host.addEventListener('pointerup', () => { MAP_DRAG = null; });
+  host.addEventListener('pointercancel', () => { MAP_DRAG = null; });
+}
 function token(){ return sessionStorage.getItem('dune_admin_tok') || ''; }
 function esc(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 async function api(path, body){
@@ -508,16 +589,69 @@ async function refresh(){
   if ($('#vehicles') && !$('#vehicles').hidden) loadVehicles();
   if ($('#social') && !$('#social').hidden) loadSocial();
 }
+function setMapModeUi(){
+  const resMode = MAP_MODE === 'resources';
+  if ($('#mapActorLayers')) $('#mapActorLayers').hidden = resMode;
+  if ($('#mapResLayers')) $('#mapResLayers').hidden = !resMode;
+  document.querySelectorAll('#mapmode button').forEach(b => b.classList.toggle('on', b.dataset.mode===MAP_MODE));
+}
 function haggaLayers(){
   return {
     on: !($('#mapOn') && !$('#mapOn').checked),
     off: !($('#mapOff') && !$('#mapOff').checked),
     claim: !($('#mapClaim') && !$('#mapClaim').checked),
-    veh: !($('#mapVeh') && !$('#mapVeh').checked)
+    veh: !($('#mapVeh') && !$('#mapVeh').checked),
+    RhyoliteOre: !($('#mapRhyolite') && !$('#mapRhyolite').checked),
+    AzuriteOre: !($('#mapAzurite') && !$('#mapAzurite').checked),
+    MagnetiteOre: !($('#mapMagnetite') && !$('#mapMagnetite').checked),
+    DolomiteRock: !($('#mapDolomite') && !$('#mapDolomite').checked),
+    ErythriteOre: !($('#mapErythrite') && !$('#mapErythrite').checked),
+    BauxiteOre: !($('#mapBauxite') && !$('#mapBauxite').checked),
+    BasaltOre: !($('#mapBasalt') && !$('#mapBasalt').checked),
+    plant: !($('#mapPlant') && !$('#mapPlant').checked),
+    wreck: !($('#mapWreck') && !$('#mapWreck').checked),
+    camp: !($('#mapCamp') && !$('#mapCamp').checked),
+    cave: !($('#mapCave') && !$('#mapCave').checked),
+    hazard: !($('#mapHaz') && !$('#mapHaz').checked),
+    poi: !($('#mapPoi') && !$('#mapPoi').checked),
+    pickup: !($('#mapPickup') && !$('#mapPickup').checked)
   };
 }
-function haggaXY(b, x, y){
-  const W=800, H=800;
+function resourceOn(m, L){
+  if ((m.g || '') === 'ore') return !!L[m.t];
+  return !!L[m.g];
+}
+function clampMapZoom(){
+  if (MAP_Z.s < 1) MAP_Z.s = 1;
+  if (MAP_Z.s > 8) MAP_Z.s = 8;
+  const st = $('#mapstage');
+  if (!st || MAP_Z.s <= 1){ MAP_Z.x = 0; MAP_Z.y = 0; return; }
+  const w = st.clientWidth, h = st.clientHeight;
+  MAP_Z.x = Math.min(0, Math.max(w - w * MAP_Z.s, MAP_Z.x));
+  MAP_Z.y = Math.min(0, Math.max(h - h * MAP_Z.s, MAP_Z.y));
+}
+function applyMapZoom(){
+  clampMapZoom();
+  const pan = $('#mappan');
+  if (pan) pan.style.transform = 'translate('+MAP_Z.x+'px,'+MAP_Z.y+'px) scale('+MAP_Z.s+')';
+  if ($('#mapZlab')) $('#mapZlab').textContent = MAP_Z.s.toFixed(1)+'x';
+}
+function mapZoomAt(factor, cx, cy){
+  const st = $('#mapstage');
+  const prev = MAP_Z.s;
+  const mx = cx != null ? cx : (st ? st.clientWidth/2 : 0);
+  const my = cy != null ? cy : (st ? st.clientHeight/2 : 0);
+  MAP_Z.s = prev * factor;
+  MAP_Z.x = mx - (mx - MAP_Z.x) * (MAP_Z.s / prev);
+  MAP_Z.y = my - (my - MAP_Z.y) * (MAP_Z.s / prev);
+  applyMapZoom();
+}
+function haggaSize(d){
+  const aspect = Math.max(Number(d && d.aspect) || 1, 0.4);
+  const W = 800;
+  return [W, Math.max(Math.round(W / aspect), 200)];
+}
+function haggaXY(b, x, y, W, H){
   const dx=Math.max(Number(b.max_x)-Number(b.min_x), 1);
   const dy=Math.max(Number(b.max_y)-Number(b.min_y), 1);
   return [((Number(x)-Number(b.min_x))/dx)*W, ((Number(y)-Number(b.min_y))/dy)*H];
@@ -541,48 +675,89 @@ function drawHagga(d){
   if (!frame) return;
   if ($('#maptitle')) $('#maptitle').textContent = (d && d.title) || MAP_WHICH;
   document.querySelectorAll('#mapwhich button').forEach(b => b.classList.toggle('on', b.dataset.map===MAP_WHICH));
+  document.querySelectorAll('#mapmode button').forEach(b => b.classList.toggle('on', b.dataset.mode===MAP_MODE));
+  const resMode = MAP_MODE === 'resources';
+  setMapModeUi();
+  if ($('#maphint')) $('#maphint').textContent = resMode
+    ? 'World POIs from Postgres, not live node fill. Tick the ores you want. Wheel zoom, drag to pan. Auto-refresh every 15s.'
+    : 'Click a pin to fill Character/Tools id. Wheel zoom, drag to pan. Auto-refresh every 15s.';
   if (!d || d.ok === false){
     frame.innerHTML = `<p class="bad">${esc((d&&d.error)||'map failed')}</p>`;
     return;
   }
   const b = d.bounds;
   const L = haggaLayers();
-  const players = (d.players||[]).filter(p => p.online ? L.on : L.off);
-  const claims = L.claim ? (d.claims||[]) : [];
-  const vehs = L.veh ? (d.vehicles||[]) : [];
+  const players = resMode ? [] : (d.players||[]).filter(p => p.online ? L.on : L.off);
+  const claims = (!resMode && L.claim) ? (d.claims||[]) : [];
+  const vehs = (!resMode && L.veh) ? (d.vehicles||[]) : [];
   const nOn = (d.players||[]).filter(p=>p.online).length;
-  const counts = `${nOn} online · ${(d.players||[]).length - nOn} offline pawns · ${(d.claims||[]).length} claims · ${(d.vehicles||[]).length} vehicles · gold square = claim · blue diamond = vehicle`;
+  const resources = resMode ? (d.resources||[]).filter(m => resourceOn(m, L)) : [];
+  const counts = resMode
+    ? `${resources.length} showing / ${(d.resources||[]).length} POIs`
+    : `${nOn} online · ${(d.players||[]).length - nOn} offline pawns · ${(d.claims||[]).length} claims · ${(d.vehicles||[]).length} vehicles · gold square = claim · blue diamond = vehicle`;
   if (!b){
     const extra = (d.map === 'DeepDesert') ? ' Deep Desert stays empty until someone is on that map.' : '';
     frame.innerHTML = `<p class="muted">${esc(counts)}</p><p class="muted">No actors with transforms on this map yet.${extra}</p>`;
     return;
   }
+  const [W,H] = haggaSize(d);
+  const resFill = {ore:'#d4a24a',plant:'#6a9a5a',wreck:'#8a8680',camp:'#c45a4a',cave:'#8a6aaa',hazard:'#a05030',poi:'#e8e0d0',pickup:'#e8d48a',
+    RhyoliteOre:'#c4783a', AzuriteOre:'#4a7ab8', MagnetiteOre:'#9a9a9a', DolomiteRock:'#c4b89a', ErythriteOre:'#a43a5a', BauxiteOre:'#e8e0d0', BasaltOre:'#3a3a42'};
+  const resName = {RhyoliteOre:'Granite', RhyolitePickup:'Granite pickup', AzuriteOre:'Copper', AzuritePickup:'Copper pickup',
+    MagnetiteOre:'Iron', MagnetitePickup:'Iron pickup', DolomiteRock:'Carbon', DolomitePickup:'Carbon pickup',
+    BauxiteOre:'Aluminum', BauxitePickup:'Aluminum pickup', BasaltOre:'Basalt', BasaltPickup:'Basalt pickup',
+    ScrapMetalPart:'Salvage', ScrapMetalWreckage:'Salvage wreck', FuelCellPart:'Fuel cell', FuelCellWreckage:'Fuel wreck',
+    Shipwreck:'Shipwreck'};
   let marks = '';
+  const resR = resources.length <= 8 ? 6 : (resources.length <= 40 ? 3.4 : 2.4);
+  for (const m of resources){
+    const [cx,cy] = haggaXY(b, m.x, m.y, W, H);
+    const fill = resFill[m.t] || resFill[m.g] || '#e8e0d0';
+    marks += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${resR}" fill="${fill}" stroke="#1c160a" stroke-width="1"><title>${esc(resName[m.t]||m.t||m.g)}</title></circle>`;
+  }
   for (const c of claims){
-    const [cx,cy] = haggaXY(b, c.x, c.y);
+    const [cx,cy] = haggaXY(b, c.x, c.y, W, H);
     const who = c.owner_name || c.name || 'claim';
-    marks += `<rect class="mapdot" x="${(cx-4.5).toFixed(1)}" y="${(cy-4.5).toFixed(1)}" width="9" height="9" fill="#c4a35a" data-pid="${esc(c.owner_id||'')}"><title>${esc(who)}</title></rect>`;
+    marks += `<rect class="mapdot" x="${(cx-4.5).toFixed(1)}" y="${(cy-4.5).toFixed(1)}" width="9" height="9" fill="#c4a35a" stroke="#1c160a" stroke-width="1" data-pid="${esc(c.owner_id||'')}"><title>${esc(who)}</title></rect>`;
   }
   for (const v of vehs){
-    const [cx,cy] = haggaXY(b, v.x, v.y);
+    const [cx,cy] = haggaXY(b, v.x, v.y, W, H);
     const who = (v.owner_name ? v.owner_name+' · ' : '') + (v.name||'vehicle');
-    marks += `<polygon class="mapdot" points="${cx.toFixed(1)},${(cy-6).toFixed(1)} ${(cx+5.5).toFixed(1)},${cy.toFixed(1)} ${cx.toFixed(1)},${(cy+6).toFixed(1)} ${(cx-5.5).toFixed(1)},${cy.toFixed(1)}" fill="#6a8aaa" data-pid="${esc(v.owner_id||'')}"><title>${esc(who)}</title></polygon>`;
+    marks += `<polygon class="mapdot" points="${cx.toFixed(1)},${(cy-6).toFixed(1)} ${(cx+5.5).toFixed(1)},${cy.toFixed(1)} ${cx.toFixed(1)},${(cy+6).toFixed(1)} ${(cx-5.5).toFixed(1)},${cy.toFixed(1)}" fill="#6a8aaa" stroke="#1c160a" stroke-width="1" data-pid="${esc(v.owner_id||'')}"><title>${esc(who)}</title></polygon>`;
   }
   for (const p of players){
-    const [cx,cy] = haggaXY(b, p.x, p.y);
+    const [cx,cy] = haggaXY(b, p.x, p.y, W, H);
     const fill = p.online ? '#7aa36a' : '#9a907e';
-    marks += `<circle class="mapdot" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5.5" fill="${fill}" data-pid="${esc(p.player_id||'')}"><title>${esc(p.name||p.player_id)}</title></circle>
-      <text x="${(cx+8).toFixed(1)}" y="${(cy+4).toFixed(1)}" fill="#e8e0d0" font-size="12">${esc(p.name||'')}</text>`;
+    marks += `<circle class="mapdot" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5.5" fill="${fill}" stroke="#1c160a" stroke-width="1" data-pid="${esc(p.player_id||'')}"><title>${esc(p.name||p.player_id)}</title></circle>
+      <text x="${(cx+8).toFixed(1)}" y="${(cy+4).toFixed(1)}" fill="#e8e0d0" stroke="#1c160a" stroke-width="3" paint-order="stroke" font-size="12">${esc(p.name||'')}</text>`;
   }
-  frame.innerHTML = `<p class="muted">${esc(counts)}</p>
-    <svg class="mapsvg" viewBox="0 0 800 800" preserveAspectRatio="xMidYMid meet">
-      <rect x="36" y="36" width="728" height="728" rx="18" fill="none" stroke="#3a342a"/>
-      ${mapDecor(d.map)}
-      ${marks}
-    </svg>`;
+  const href = d._href || '';
+  const bg = href
+    ? `<image href="${esc(href)}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/>`
+    : `<rect x="36" y="36" width="${W-72}" height="${H-72}" rx="18" fill="none" stroke="#3a342a"/>${mapDecor(d.map)}`;
+  let empty = '';
+  if (resMode && !resources.length){
+    if (d.map === 'Arrakeen' || d.map === 'HarkoVillage') empty = `<p class="muted">City pins are vendors and landmarks. Tick POI.</p>`;
+    else empty = `<p class="muted">${(d.resources||[]).length ? 'Nothing selected, or no matching POIs on this map.' : 'No resource POIs in Postgres for this map.'}</p>`;
+  }
+  else if (!resMode && !players.length && !claims.length && !vehs.length) empty = `<p class="muted">${(d.map === 'DeepDesert') ? 'No actors on Deep Desert yet.' : 'No actors with transforms on this map yet.'}</p>`;
+  frame.innerHTML = `<p class="muted">${esc(counts)}</p>${empty}
+    <div id="mapstage"><div id="mappan"><svg class="mapsvg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">${bg}${marks}</svg></div></div>`;
+  applyMapZoom();
+}
+const MAP_IMG = {};
+async function mapHref(path){
+  if (!path) return '';
+  if (MAP_IMG[path]) return MAP_IMG[path];
+  const r = await fetch(path, {headers:{'X-Admin-Token': token()}});
+  if (!r.ok) return '';
+  const url = URL.createObjectURL(await r.blob());
+  MAP_IMG[path] = url;
+  return url;
 }
 async function loadHagga(){
   HAGGA = await api('/api/hagga-map?map=' + encodeURIComponent(MAP_WHICH));
+  if (HAGGA && HAGGA.image) HAGGA._href = await mapHref(HAGGA.image);
   drawHagga(HAGGA);
 }
 function svgMap(title, dots){

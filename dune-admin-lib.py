@@ -35,11 +35,72 @@ _WIKI_LOCK = threading.Lock()
 _WIKI_FETCHING = False
 _CATALOG_MEM = {"t": 0.0, "v": None}
 _MAP_BOUNDS: dict = {}
+_MAP_MARKERS: dict = {}
+_MAP_NAME_IDS: dict = {}
+MARKER_GROUP = {
+    "RhyoliteOre": "ore",
+    "AzuriteOre": "ore",
+    "MagnetiteOre": "ore",
+    "DolomiteRock": "ore",
+    "ErythriteOre": "ore",
+    "BauxiteOre": "ore",
+    "BasaltOre": "ore",
+    "RhyolitePickup": "pickup",
+    "AzuritePickup": "pickup",
+    "MagnetitePickup": "pickup",
+    "DolomitePickup": "pickup",
+    "ErythritePickup": "pickup",
+    "BauxitePickup": "pickup",
+    "BasaltPickup": "pickup",
+    "FuelCellPart": "pickup",
+    "ScrapMetalPart": "pickup",
+    "ScrapMetalWreckage": "wreck",
+    "FuelCellWreckage": "wreck",
+    "Shipwreck": "poi",
+    "BrittleBush": "plant",
+    "PrimroseField": "plant",
+    "EnemyCamp": "camp",
+    "EnemyOutpost": "camp",
+    "EnemyLaborOutpost": "camp",
+    "Cave": "cave",
+    "Ecolab": "cave",
+    "Hazard_Quicksand": "hazard",
+    "Hazard_Drumsand": "hazard",
+    "Hazard_Radiation": "hazard",
+}
+_MAP_DIR = Path(__file__).resolve().with_name("admin-maps")
+# Hagga: published ~8073m x 8140m, Unreal cm, origin on-map (live markers both signs).
+# Deep Desert: 9x9 / 576 km2 ~24 km, origin assumed center like Hagga.
+# Cities: live dune.markers AABB, padded and expanded to the screenshot aspect.
 MAP_FRAMES = {
-    "HaggaBasin": {"title": "Hagga Basin", "maps": ("HaggaBasin",)},
-    "Arrakeen": {"title": "Arrakeen", "maps": ("Arrakeen",)},
-    "HarkoVillage": {"title": "Harko Village", "maps": ("HarkoVillage",)},
-    "DeepDesert": {"title": "Deep Desert", "maps": ("DeepDesert", "DeepDesert_1")},
+    "HaggaBasin": {
+        "title": "Hagga Basin",
+        "maps": ("HaggaBasin",),
+        "image": "HaggaBasin.jpg",
+        "aspect": 1.0,
+        "bounds": {"min_x": -403650.0, "max_x": 403650.0, "min_y": -407000.0, "max_y": 407000.0},
+    },
+    "Arrakeen": {
+        "title": "Arrakeen",
+        "maps": ("Arrakeen",),
+        "image": "Arrakeen.jpg",
+        "aspect": 1024 / 547,
+        "bounds": {"min_x": -30439.0, "max_x": 17486.0, "min_y": -13235.0, "max_y": 12378.0},
+    },
+    "HarkoVillage": {
+        "title": "Harko Village",
+        "maps": ("HarkoVillage",),
+        "image": "HarkoVillage.jpg",
+        "aspect": 1024 / 632,
+        "bounds": {"min_x": -26590.0, "max_x": 35281.0, "min_y": -6112.0, "max_y": 32083.0},
+    },
+    "DeepDesert": {
+        "title": "Deep Desert",
+        "maps": ("DeepDesert", "DeepDesert_1"),
+        "image": "DeepDesert.png",
+        "aspect": 1.0,
+        "bounds": {"min_x": -1200000.0, "max_x": 1200000.0, "min_y": -1200000.0, "max_y": 1200000.0},
+    },
 }
 
 GM_GATES = {
@@ -86,8 +147,8 @@ def _k(file: str, key: str, cat: str, hint: str = "", section: str = "") -> dict
 
 INI_KEYS = [
     _k("UserServerCustomSettings.ini", "DifficultyLevel", "Custom difficulty", "Must stay Custom or Funcom ignores this file"),
-    _k("UserServerCustomSettings.ini", "PVPMode", "PvP", "Stay NoPVP. Limited = old Hagga wrecks, not DD-only. FullPVP = everywhere."),
-    _k("UserGame.ini", "m_bShouldForceEnablePvpOnAllPartitions", "PvP", "Keep False. True PvPs Hagga and the hubs. Official-like later: only +m_PvpEnabledPartitions=8. This world has one DD map (DeepDesert_1), not official dual PvE/PvP instances."),
+    _k("UserServerCustomSettings.ini", "PVPMode", "PvP", "NoPVP, Limited, or FullPVP. Limited is old Hagga wrecks, not Deep Desert only. See docs/pvp.md."),
+    _k("UserGame.ini", "m_bShouldForceEnablePvpOnAllPartitions", "PvP", "Keep False. True PvPs Hagga and the cities. Deep Desert only: +m_PvpEnabledPartitions=8. See docs/pvp.md."),
     _k("UserGame.ini", "m_bAreSecurityZonesEnabled", "PvP", "False allows PvP/abilities everywhere"),
     _k("UserServerCustomSettings.ini", "PlayerDamageToPlayer", "PvP", "0 to 10; 0 = no player damage"),
     _k("UserServerCustomSettings.ini", "PVPDamageStructures", "PvP", "0 to 10; 0 = structures take no PvP damage"),
@@ -800,6 +861,59 @@ def _map_in_sql(maps: tuple) -> str:
     return ",".join(ok) if ok else "'HaggaBasin'"
 
 
+def _map_image_url(spec: dict) -> str:
+    name = spec.get("image") or ""
+    if not name or "/" in name or "\\" in name:
+        return ""
+    return "/maps/" + name if (_MAP_DIR / name).is_file() else ""
+
+
+def _map_name_id(which: str) -> int:
+    now = time.time()
+    cached = _MAP_NAME_IDS.get(which)
+    if cached and now - float(cached.get("t") or 0) < 3600:
+        return int(cached.get("v") or 0)
+    name = re.sub(r"[^A-Za-z0-9_]", "", which or "")
+    rows = _psql_rows(
+        "SELECT map_name_id::text FROM dune.map_names WHERE map_name = '%s' LIMIT 1" % name
+    )
+    mid = 0
+    if rows and rows[0] and str(rows[0][0]).isdigit():
+        mid = int(rows[0][0])
+    _MAP_NAME_IDS[which] = {"t": now, "v": mid}
+    return mid
+
+
+def _map_resources(which: str) -> list:
+    now = time.time()
+    cached = _MAP_MARKERS.get(which)
+    if cached and now - float(cached.get("t") or 0) < 30:
+        return cached.get("v") or []
+    mid = _map_name_id(which)
+    out = []
+    if mid:
+        for r in _psql_rows(
+            "SELECT marker_type, position::text FROM dune.markers "
+            "WHERE map_name_id = %d LIMIT 20000" % mid
+        ):
+            kind = r[0] if r else ""
+            if not kind or kind == "NoIcon":
+                continue
+            xy = _xy_of(r[1] if len(r) > 1 else "")
+            if not xy:
+                continue
+            out.append(
+                {
+                    "t": kind,
+                    "g": MARKER_GROUP.get(kind, "poi"),
+                    "x": xy[0],
+                    "y": xy[1],
+                }
+            )
+    _MAP_MARKERS[which] = {"t": now, "v": out}
+    return out
+
+
 def _map_bounds(maps: tuple) -> dict | None:
     key = ",".join(maps)
     now = time.time()
@@ -912,17 +1026,21 @@ def hagga_map(which: str = "HaggaBasin") -> dict:
         owner = (r[3] if len(r) > 3 else "") or (r[4] if len(r) > 4 else "")
         _attach_owner(rec, idx, owner)
         vehicles.append(rec)
-    bounds = _map_bounds(maps)
+    image = _map_image_url(spec)
+    bounds = spec.get("bounds") or _map_bounds(maps)
     key = which if which in MAP_FRAMES else "HaggaBasin"
     return {
         "ok": True,
         "map": key,
         "title": spec["title"],
         "bounds": bounds,
+        "image": image,
+        "aspect": float(spec.get("aspect") or 1.0) if image else 1.0,
         "south": "high-y",
         "players": players,
         "claims": claims,
         "vehicles": vehicles,
+        "resources": _map_resources(key),
     }
 
 

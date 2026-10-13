@@ -1,0 +1,16 @@
+# After the world exists
+
+Install-time errors (AVX2, WSL reboot, virtualization, missing Ubuntu, bad `LanIp`) stay in the pack [README](../README.md).
+
+- **In queue / server offline after an update.** A depot roll restarts Hagga. The client can list the world while Survival is still `Startup` / `PostLandscapePhysics`, or while director `31519` is not listening. Run `Get-DuneStatus.ps1`. Join only when Overmap and Survival_1 are Running / true and Gateway is Ready (not Modifying).
+- **HP3 / pending connection / could not verify identity.** Hagga could not reach Funcom FLS DNS (`sb-retail.fls.funcom.com`). Check `systemctl is-active dune-fls-dns.service`. Re-run `Install.bat` or `Restart-DuneBattlegroup.ps1` to recopy the unit. Join only when Survival is Running / true.
+- **Client cannot see the world.** Other computer (not the host), **Experimental** tab, firewall. Internet: `AdvertiseIp` must be `"auto"` or the current public IPv4, and the router must forward to `LanIp`. LAN-only: leave `AdvertiseIp` empty. Funcom name filter: [listing.md](listing.md).
+- **Connection timed out (world is listed).** Funcom’s directory is not the UDP path. `Get-DuneStatus.ps1` should show `running_ExternalAddress` equal to the public IPv4, and `running_MultiHome` equal to `LanIp`. Forward UDP `7777–7810` **and** TCP `31982` to `LanIp`; this WSL stack also needs TCP `31519` and UDP `7888–7941`. Do not put the WAN IP on k3s as `node-external-ip`.
+- **Rubberbanding on a house PC while internet friends are fine.** [house-pc.md](house-pc.md).
+- **Rubberbanding / hitching for everyone.** Windows WSL default `autoMemoryReclaim` can reclaim Hagga’s pages while the process is running. The installer sets `autoMemoryReclaim=disabled` in `%USERPROFILE%\.wslconfig`. That key applies on the next `wsl --shutdown` (or first start after the file is written). Re-runs do not shut WSL down when the key is already `disabled`. Do not set `pageReporting`. `Get-DuneStatus.ps1` warns if reclaim is not disabled.
+- **WSL distro failed to start.** Often RAM (`WslMemory` too high for the host) or virtualization off.
+- **`wsl.exe` Catastrophic failure / `E_UNEXPECTED` while Ubuntu still shows Running.** Run `Restart-DuneBattlegroup.ps1`. It terminates the distro, and only `wsl --shutdown`s if exec is still dead.
+- **World Stopped after a Windows/WSL reboot.** k3s flannel (`/run/flannel/subnet.env`) is missing and/or Funcom `spec.stop` stayed true. `Restart-DuneBattlegroup.ps1` restores both, then waits until Survival is Running / true.
+- **Join timeout after a depot update; Funcom status says Stopped / no game servers.** A schema util pod can fail on a duplicate patch after the SQL already applied. Hourly maintain treats missing Survival/Overmap pods as the source of truth, deletes stuck util pods, and starts maps again.
+
+Do not run `wsl --shutdown` on a live public world unless `.wslconfig` actually changed.

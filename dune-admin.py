@@ -1261,6 +1261,24 @@ class Handler(BaseHTTPRequestHandler):
         raw = json.dumps(obj, default=str).encode("utf-8")
         self._send(code, raw, "application/json; charset=utf-8", extra)
 
+    def _send_map(self, path: str) -> None:
+        name = path.rsplit("/", 1)[-1]
+        if not re.match(r"^[A-Za-z0-9._-]+\.(jpg|jpeg|png|webp)$", name, re.I):
+            self._json(404, {"ok": False, "error": "not found"})
+            return
+        root = Path(__file__).resolve().with_name("admin-maps").resolve()
+        fp = (root / name).resolve()
+        if fp.parent != root or not fp.is_file():
+            self._json(404, {"ok": False, "error": "not found"})
+            return
+        ctype = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".webp": "image/webp",
+        }.get(fp.suffix.lower(), "application/octet-stream")
+        self._send(200, fp.read_bytes(), ctype)
+
     def _login_ok(self) -> bool:
         ip = self._ip()
         now = time.time()
@@ -1297,6 +1315,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not authed:
             self._json(401, {"ok": False, "error": "auth"})
+            return
+        if path.startswith("/maps/"):
+            self._send_map(path)
             return
         ip = lan_ip()
         if path == "/api/status":
