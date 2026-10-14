@@ -2,7 +2,7 @@
 
 Joinable (Survival + Overmap Running / true, ports up) is not the same as listed. Listed means Funcom accepted `DeclareFarmStatus`.
 
-- **Title** (server browser row): Funcom CR `spec.title`. Set at install from `WorldName`. Settings shows it read-only. Changing the live CR can bounce maps.
+- **Title** (server browser row): Funcom CR `spec.title`. Set at install from `WorldName`. Change it on World → Listing → Save title. That patches the live CR and can bounce maps or unlist the world.
 - **Overlay** (sietch pane): `Bgd.ServerDisplayName`. Settings → Listing subtitle.
 
 Funcom filters both. A bad **title** returns **400 Invalid display name** and Gateway unlists the world. A bad **overlay** shows **ACTION REQUIRED … Server name violates guidelines** while the title can still list. That is a guidelines reject, not a length cap. A short name can fail; a longer one can pass.

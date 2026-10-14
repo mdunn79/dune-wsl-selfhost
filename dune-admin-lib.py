@@ -132,6 +132,7 @@ LIVE_EFFECT_OPS = set(GM_GATES) | {
     "restore-backup",
     "advertise-auto",
     "advertise-lan",
+    "save-listing-title",
     "schedule-restart",
     "kick",
     "ban",
@@ -221,7 +222,7 @@ INI_KEYS = [
     _k("UserServerCustomSettings.ini", "BaseBackupToolTimeRestriction", "Building", "Hours; custom-settings copy of the cooldown"),
     _k("UserServerCustomSettings.ini", "BuildingPieceLimitMultiplier", "Building", "0.1 to 10"),
     _k("UserServerCustomSettings.ini", "bBuildingInfiniteStability", "Building", "True / False"),
-    _k("UserEngine.ini", "Bgd.ServerDisplayName", "Listing", "Directory subtitle. Funcom CR spec.title is the listing title. If this line is commented, only the CR title shows."),
+    _k("UserEngine.ini", "Bgd.ServerDisplayName", "Listing", "Sietch overlay subtitle. The Experimental browser title is World → Listing (Funcom CR spec.title), not this INI."),
     _k(
         "UserGame.ini",
         "m_PingsPerPlayerLimit",
@@ -786,6 +787,51 @@ def battlegroup_overview() -> dict:
     return out
 
 
+def set_listing_title(title: str) -> tuple[bool, str]:
+    """Patch Funcom CR spec.title. Can bounce maps or unlist if Funcom rejects the name."""
+    n = M.ns()
+    if not n:
+        return False, "no battlegroup namespace"
+    data = M.kubectl_json(["get", "battlegroup", "-n", n])
+    if not isinstance(data, dict):
+        return False, "could not read battlegroup"
+    items = data.get("items") or ([data] if data.get("kind") else [])
+    if not items:
+        return False, "no battlegroup"
+    rec = items[0]
+    name = str((rec.get("metadata") or {}).get("name") or "") or (M.bg() or "")
+    if not name:
+        return False, "no battlegroup name"
+    current = str((rec.get("spec") or {}).get("title") or "")
+    if title == current:
+        return True, "unchanged"
+    payload = json.dumps({"spec": {"title": title}})
+    code, out = M.run(
+        [
+            "sudo",
+            "kubectl",
+            "patch",
+            "battlegroup",
+            name,
+            "-n",
+            n,
+            "--type",
+            "merge",
+            "-p",
+            payload,
+        ],
+        timeout=60,
+    )
+    if code != 0:
+        return False, (out or "kubectl patch failed")[-2000:]
+    hosts = "/home/dune/.dune/bin/apply-k8s-hosts.sh"
+    if os.path.isfile(hosts):
+        hcode, _hout = M.run(["sudo", hosts], timeout=60)
+        if hcode != 0:
+            return True, "patched spec.title to %s (hosts refresh failed)" % title
+    return True, "patched spec.title to %s" % title
+
+
 def overview_map() -> dict:
     """Pawn XY plus overmap dots. SELECT only."""
     hid = (M.world_host_id() or "").replace("'", "")
@@ -1269,6 +1315,17 @@ def enrich_status(payload: dict) -> dict:
         and bool(ports.get("director_31519"))
     )
     payload["join_notes"] = notes
+    for m in payload.get("maps") or []:
+        kind = str(m.get("kind") or "")
+        if kind == "Survival":
+            s = surv
+        elif kind == "Overmap":
+            s = over
+        else:
+            s = None
+        m["pod_ready"] = bool(m.get("ready"))
+        m["funcom_phase"] = str((s or {}).get("phase") or "")
+        m["funcom_ready"] = _funcom_running_ready(s) if s is not None else None
     return payload
 
 
@@ -2421,6 +2478,20 @@ def extra_action(body: dict):
     pid = M.resolve_player_id(str(body.get("player_id") or ""))
     confirm = bool(body.get("confirm"))
 
+    if op == "save-listing-title":
+        title = str(body.get("title") or "").strip()
+        if not title:
+            return {"ok": False, "error": "title required"}
+        if "'" in title or "|" in title:
+            return {"ok": False, "error": "title cannot contain ' or |"}
+        if any(ord(c) < 32 for c in title):
+            return {"ok": False, "error": "title has control characters"}
+        if len(title) > 200:
+            return {"ok": False, "error": "title too long"}
+        if not confirm:
+            return {"ok": False, "error": "confirm required (Funcom CR patch; can bounce maps)"}
+        ok, msg = set_listing_title(title)
+        return {"ok": ok, "out": msg}
     if op == "refresh-catalog":
         maybe_start_wiki_fetch(True)
         time.sleep(0.2)
