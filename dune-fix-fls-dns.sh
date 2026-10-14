@@ -159,7 +159,7 @@ watch_loop() {
     n=$((n+1))
     if [ "$n" -ge 12 ]; then
       n=0
-      /home/dune/.dune/bin/apply-k8s-hosts.sh >/dev/null 2>&1 || true
+      /home/dune/.dune/bin/apply-k8s-hosts.sh >/dev/null || true
     fi
     sleep 5
   done

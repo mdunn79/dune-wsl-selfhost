@@ -57,6 +57,7 @@ $once = New-ScheduledTaskTrigger -Once -At $now -RepetitionInterval (New-TimeSpa
 $daily = New-ScheduledTaskTrigger -Daily -At 00:00
 $rep = (New-ScheduledTaskTrigger -Once -At ([datetime]::Today) -RepetitionInterval (New-TimeSpan -Minutes $RepeatMinutes) -RepetitionDuration (New-TimeSpan -Days 1)).Repetition
 $daily.Repetition = $rep
+$logon = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet `
@@ -66,10 +67,10 @@ $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
 
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($once, $daily) -Principal $principal -Settings $settings -Force | Out-Null
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($once, $daily, $logon) -Principal $principal -Settings $settings -Force | Out-Null
 
 Write-Host "Scheduled task $TaskName installed."
-Write-Host ("  Every {0} minute(s). Start in: {1}" -f $RepeatMinutes, $here)
+Write-Host ("  Every {0} minute(s), plus At log on. Start in: {1}" -f $RepeatMinutes, $here)
 Write-Host "  If a run is already in progress, the next tick is skipped (IgnoreNew)."
 Write-Host "  Skips while DuneBattlegroupMaintain / Restart-DuneBattlegroup.ps1 is running."
 Write-Host "  Log: $(Join-Path $here 'repair-dune-health.log')"

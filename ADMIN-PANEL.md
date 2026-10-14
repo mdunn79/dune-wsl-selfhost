@@ -43,7 +43,7 @@ Funcom does not ship a kick/ban CLI. Kick, grants, broadcasts, and other GM tool
 | `admin-maps/` | Optional in-game screenshots for the Map tab. Not shipped (Funcom art). Drop `HaggaBasin.jpg`, `Arrakeen.jpg`, `HarkoVillage.jpg`, `DeepDesert.png`. |
 | `dune-admin.sh` | `python3` launcher; `--install` enables/restarts the systemd unit |
 | `dune-admin.service` | `User=dune`, `ExecStart=.../dune-admin.sh` |
-| `dune-fls-dns.service` | Root watcher: rewrite Unreal sandbox DNS to `8.8.8.8` / `ndots:1` and keep MQ/DB names pointed at current pod IPs. Does not bounce maps. |
+| `dune-fls-dns.service` | Root watcher: rewrite Unreal sandbox DNS to `8.8.8.8` / `ndots:1` and keep MQ/DB names pointed at current pod IPs. Restarts an Unreal container only if MQ IPs changed and that map's current log already shows admin RMQ TCP failure. |
 
 On the WSL host, bans, whitelist, notes, and panel config live under `/home/dune/.dune/` (`admin-bans.json`, `admin-whitelist.json`, `admin-notes.json`, `admin-config.json`). They are **not** Funcom directory files.
 
