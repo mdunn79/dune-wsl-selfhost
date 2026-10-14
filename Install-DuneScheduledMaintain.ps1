@@ -5,7 +5,8 @@
 #   powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-DuneScheduledMaintain.ps1"
 #
 # Default: Daily 6:00 AM local, repeat every hour, plus At log on for this Windows user.
-# Also registers DuneBattlegroupPreShutdown on System event 1074 (restart/shutdown).
+# Also registers DuneBattlegroupPreShutdown on System event 1074 (restart/shutdown)
+# and DuneBattlegroupWatch (At log on session window; Windows waits for stop).
 # If a run is already going (a Steam depot can take ~45 minutes), a new tick is skipped.
 
 param(
@@ -28,14 +29,18 @@ if (-not (Test-Path $script)) {
 
 $stopName = "DuneBattlegroupPreShutdown"
 $stopScript = Join-Path $here "Stop-DuneBattlegroup.ps1"
+$watchName = "DuneBattlegroupWatch"
+$watchScript = Join-Path $here "Watch-DuneBattlegroup.ps1"
 
 if ($Uninstall) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName $stopName -Confirm:$false -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName $watchName -Confirm:$false -ErrorAction SilentlyContinue
     Write-Host "Removed scheduled task $TaskName (if it existed)."
     Write-Host "Removed scheduled task $stopName (if it existed)."
+    Write-Host "Removed scheduled task $watchName (if it existed)."
     foreach ($t in @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
-        @($_.Actions) -match "Restart-DuneBattlegroup|Stop-DuneBattlegroup"
+        @($_.Actions) -match "Restart-DuneBattlegroup|Stop-DuneBattlegroup|Watch-DuneBattlegroup"
     })) {
         Unregister-ScheduledTask -TaskName $t.TaskName -Confirm:$false
         Write-Host ("Removed duplicate scheduled task {0}." -f $t.TaskName)
@@ -104,6 +109,17 @@ if (-not (Test-Path $stopScript)) {
         Set-ScheduledTask -InputObject $stopTask | Out-Null
         Write-Host "Scheduled task $stopName installed (System event 1074 restart/shutdown)."
         Write-Host "  Log: $(Join-Path $here 'stop-dune-battlegroup.log')"
+    }
+}
+
+if (-not (Test-Path $watchScript)) {
+    Write-Host "WARNING: missing $watchScript; skip $watchName"
+} else {
+    try {
+        & $watchScript -Register
+    } catch {
+        Write-Host "WARNING: could not register $watchName"
+        Write-Host $_.Exception.Message
     }
 }
 
