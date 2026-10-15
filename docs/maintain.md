@@ -9,13 +9,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Restart-DuneBattlegro
 It always **looks**: Steam public buildid for app `4754530`, map Ready, join TCP `31982` / `31519`, advertise IPv4. It only **acts** when something is wrong or newer:
 
 - Steam depot download + map roll only if the public buildid differs from the installed appmanifest, or there is no local manifest.
-- `battlegroup start` only if Survival/Overmap pods are not Running. Joinable is Funcom Running / true, not kubectl 1/1.
+- `battlegroup start` if Survival/Overmap pods are missing or Funcom is not Running / true. Joinable is Funcom Running / true, not kubectl 1/1. After start or a depot roll, maintain waits for that Funcom Ready streak before it binds join ports and exits.
 - Advertise/listing patch (and a map roll) only if the public IPv4 actually changed.
 - Join/director bind only if those ports are missing. `dune-fls-dns.service` rewrites Unreal sandbox DNS and MQ/DB host IPs when Funcom recreates pods. If MQ IPs change and a map's current log already shows admin RMQ TCP failure, it restarts only that Unreal container. It does not stop Survival/Overmap on a no-op hour.
 - Helpers recopy only when they differ. LAN admin restarts only if those files changed or the service was down.
 - `wsl --shutdown` only if `.wslconfig` needed `autoMemoryReclaim=disabled`, or `wsl.exe` is wedged.
 
-A no-op hour is about 1–2 minutes. A real patch can take around 45 minutes. After a patch it waits until Gateway is Healthy and both maps stay Running / true, then binds join ports. Output: `restart-dune-battlegroup.log`.
+A no-op hour is about 1–2 minutes. A real patch can take around 45 minutes. After a patch or At-logon start it waits until both maps stay Funcom Running / true, then binds join ports. Output: `restart-dune-battlegroup.log`.
 
 It also restores flannel/`spec.stop` if a Windows reboot left the world Stopped.
 
@@ -27,7 +27,7 @@ Elevated PowerShell in the pack folder:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-DuneScheduledMaintain.ps1"
 ```
 
-Registers **DuneBattlegroupMaintain**: Daily **6:00 AM** local, repeat **every hour**, plus **At log on** for the Windows user who ran it. Also **DuneBattlegroupPreShutdown**: on Windows event 1074 (restart/shutdown) it runs `battlegroup stop` so Funcom is not only killed with the WSL VM. **Start in** is this folder. If a run is already going, the next tick is skipped. After a host reboot, At log on brings k3s, Hagga, and join ports back without downloading the depot again.
+Registers **DuneBattlegroupMaintain**: Daily **6:00 AM** local, repeat **every hour**, plus **At log on** for the Windows user who ran it. Also **DuneBattlegroupWatch**: At log on it opens a **Dune battlegroup** window in that session (PowerShell host hidden). It polls LAN `/status.json` every 15s for joinable, online count, and map Ready (no roster names). Windows `WM_QUERYENDSESSION` waits on that window while it runs `battlegroup stop`. Leave it open (minimize is fine). Closing it does not stop Funcom; Windows then will not wait. **DuneBattlegroupPreShutdown** (event 1074) is a backup only: Windows does not wait for that task. **Start in** is this folder. If a run is already going, the next tick is skipped. After a host reboot, At log on brings k3s, Hagga, and join ports back without downloading the depot again.
 
 Those tasks are Interactive. They run only while that Windows user is signed in. For an unattended reboot (Windows Update, power loss), enable automatic logon as **the same account** that ran this installer. Run `netplwiz`, uncheck **Users must enter a user name and password to use this computer**, and set that account. Confirm:
 
