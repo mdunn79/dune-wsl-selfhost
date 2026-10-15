@@ -118,17 +118,19 @@ map_pods_present() {
   sudo kubectl get pods -n "$ns" --no-headers 2>/dev/null | grep -qE 'sg-overmap' || return 1
 }
 
+maps_joinable() {
+  local st="$1"
+  echo "$st" | grep -qiE '[[:space:]](Modifying|Suspended|Stopped)[[:space:]]' && return 1
+  echo "$st" | grep -qE 'Overmap[[:space:]]+Running[[:space:]]+true' \
+    && echo "$st" | grep -qE 'Survival_1[[:space:]]+Running[[:space:]]+true'
+}
+
 maps_ready() {
-  local ns surv over
-  ns="$(world_ns)"
-  [ -n "$ns" ] || return 1
-  surv="$(sudo kubectl get pods -n "$ns" --no-headers 2>/dev/null | awk '/sg-survival-1/ && $3=="Running" && $2=="1/1" {print $1}' | head -n1)"
-  over="$(sudo kubectl get pods -n "$ns" --no-headers 2>/dev/null | awk '/sg-overmap/ && $3=="Running" && $2=="1/1" {print $1}' | head -n1)"
-  [ -n "$surv" ] && [ -n "$over" ]
+  maps_joinable "$("$BG" status 2>/dev/null || true)"
 }
 
 wait_maps_ready() {
-  echo "Waiting up to ${READY_TIMEOUT_SEC}s for Overmap + Survival pods Running 1/1..."
+  echo "Waiting up to ${READY_TIMEOUT_SEC}s for Overmap + Survival Funcom Running / true..."
   local elapsed=0 stable=0
   local need="${READY_STABLE_CHECKS:-3}"
   while [ "$elapsed" -lt "$READY_TIMEOUT_SEC" ]; do
@@ -224,7 +226,7 @@ echo "$status"
 
 rolled=0
 if ! map_pods_present || ! maps_ready; then
-  echo "Battlegroup maps not Running 1/1; repairing then starting (no depot download yet)"
+  echo "Battlegroup maps not Funcom Running / true; repairing then starting (no depot download yet)"
   if [ -x /home/dune/.dune/bin/dune-ensure-runtime.sh ]; then
     /home/dune/.dune/bin/dune-ensure-runtime.sh || true
   fi

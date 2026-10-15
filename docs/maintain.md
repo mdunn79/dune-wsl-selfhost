@@ -9,13 +9,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Restart-DuneBattlegro
 It always **looks**: Steam public buildid for app `4754530`, map Ready, join TCP `31982` / `31519`, advertise IPv4. It only **acts** when something is wrong or newer:
 
 - Steam depot download + map roll only if the public buildid differs from the installed appmanifest, or there is no local manifest.
-- `battlegroup start` only if Survival/Overmap pods are not Running. Joinable is Funcom Running / true, not kubectl 1/1.
+- `battlegroup start` if Survival/Overmap pods are missing or Funcom is not Running / true. Joinable is Funcom Running / true, not kubectl 1/1. After start or a depot roll, maintain waits for that Funcom Ready streak before it binds join ports and exits.
 - Advertise/listing patch (and a map roll) only if the public IPv4 actually changed.
 - Join/director bind only if those ports are missing. `dune-fls-dns.service` rewrites Unreal sandbox DNS and MQ/DB host IPs when Funcom recreates pods. If MQ IPs change and a map's current log already shows admin RMQ TCP failure, it restarts only that Unreal container. It does not stop Survival/Overmap on a no-op hour.
 - Helpers recopy only when they differ. LAN admin restarts only if those files changed or the service was down.
 - `wsl --shutdown` only if `.wslconfig` needed `autoMemoryReclaim=disabled`, or `wsl.exe` is wedged.
 
-A no-op hour is about 1–2 minutes. A real patch can take around 45 minutes. After a patch it waits until Gateway is Healthy and both maps stay Running / true, then binds join ports. Output: `restart-dune-battlegroup.log`.
+A no-op hour is about 1–2 minutes. A real patch can take around 45 minutes. After a patch or At-logon start it waits until both maps stay Funcom Running / true, then binds join ports. Output: `restart-dune-battlegroup.log`.
 
 It also restores flannel/`spec.stop` if a Windows reboot left the world Stopped.
 

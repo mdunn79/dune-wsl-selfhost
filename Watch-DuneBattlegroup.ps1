@@ -300,21 +300,37 @@ public class DuneBattlegroupWatchForm : Form {
         });
     }
 
-    void BeginStop() {
+    void BeginStop(bool critical) {
         if (Interlocked.Exchange(ref stopping, 1) != 0) return;
         if (poll != null) { poll.Stop(); }
         Append("Windows shutdown: battlegroup stop...");
+        if (critical)
+            Append("Critical shutdown: cannot block Windows; starting stop detached.");
         ThreadPool.QueueUserWorkItem(delegate {
             try {
                 ProcessStartInfo psi = new ProcessStartInfo();
                 psi.FileName = "powershell.exe";
                 psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + stopScript + "\"";
                 psi.WorkingDirectory = Path.GetDirectoryName(stopScript);
+                if (critical) {
+                    psi.UseShellExecute = true;
+                    psi.WindowStyle = ProcessWindowStyle.Hidden;
+                    Process.Start(psi);
+                    Append("battlegroup stop started (detached). Watch cannot wait.");
+                    return;
+                }
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;
                 Process p = Process.Start(psi);
-                if (p != null) p.WaitForExit(180000);
-                Append("battlegroup stop finished.");
+                if (p == null) {
+                    Append("battlegroup stop did not start.");
+                } else {
+                    bool done = p.WaitForExit(180000);
+                    if (done)
+                        Append("battlegroup stop exited " + p.ExitCode + ".");
+                    else
+                        Append("battlegroup stop still running after 180s.");
+                }
             } catch (Exception ex) {
                 Append("battlegroup stop failed: " + ex.Message);
             }
@@ -329,14 +345,13 @@ public class DuneBattlegroupWatchForm : Form {
 
     protected override void WndProc(ref Message m) {
         if (m.Msg == WM_QUERYENDSESSION) {
-            BeginStop();
             bool critical = (m.LParam.ToInt64() & ENDSESSION_CRITICAL) != 0;
+            BeginStop(critical);
             if (!critical) {
                 ShutdownBlockReasonCreate(this.Handle, "Stopping Funcom maps");
                 m.Result = IntPtr.Zero;
                 return;
             }
-            Append("Critical shutdown: cannot block Windows.");
         }
         base.WndProc(ref m);
     }
